@@ -1,0 +1,15 @@
+     
+@RFQDetailsModule
+Feature: RFQ item management
+
+  Scenario: Add item from Excel sheet and send to Vendor successfully
+    Given User is on the RFQ details page
+    When User clicks on "Add Row" button
+    And User enters item details from Excel sheet "src/resources/testdata/RFQ_Items.xlsx"
+     And User clicks on "Send Email" button
+      And User creates a new version
+     And User adds a note "Please review and submit your best quote"
+     And User selects vendors "Test_1,Test_2"
+     And User sends the email
+    Then item should be added and email sent to vendor successfully
+         

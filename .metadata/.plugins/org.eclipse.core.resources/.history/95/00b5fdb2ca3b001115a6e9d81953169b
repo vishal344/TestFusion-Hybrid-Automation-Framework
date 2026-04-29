@@ -1,0 +1,574 @@
+package Pages;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.openqa.selenium.*;
+import org.openqa.selenium.interactions.Actions;
+import org.openqa.selenium.support.ui.*;
+
+import java.io.FileInputStream;
+import java.time.Duration;
+import java.util.*;
+
+public class RFQ_DetailsPage {
+
+    WebDriver driver;
+    WebDriverWait wait;
+    WebDriverWait longWait;
+
+    public RFQ_DetailsPage(WebDriver driver) {
+        this.driver   = driver;
+        this.wait     = new WebDriverWait(driver, Duration.ofSeconds(20));
+        this.longWait = new WebDriverWait(driver, Duration.ofSeconds(60));
+    }
+
+    // ── Locators ─────────────────────────────────────────────────
+    By procurementMenu = By.xpath("//span[contains(text(),'Procurement')]");
+    By rfqMenu         = By.xpath("//span[contains(text(),'RFQ')]");
+    By rfqid           = By.xpath("//a[contains(@onclick,'redirectToRFQ')]");
+    By addRowBtn       = By.id("addRowBtn");
+    By sendEmailBtn    = By.id("sendMail");
+
+    // ── TD index map (discovered at runtime) ─────────────────────
+    private Map<String, Integer> tdMap = new LinkedHashMap<>();
+
+    // ── Navigate to RFQ page ─────────────────────────────────────
+    public void navigateToRFQPage() {
+        wait.until(d ->
+            ((JavascriptExecutor) d).executeScript("return document.readyState").equals("complete"));
+
+        WebElement procurement = wait.until(ExpectedConditions.elementToBeClickable(procurementMenu));
+        ((JavascriptExecutor) driver).executeScript(
+            "arguments[0].scrollIntoView({block:'center'});", procurement);
+        try {
+            procurement.click();
+        } catch (Exception e) {
+            ((JavascriptExecutor) driver).executeScript("arguments[0].click();", procurement);
+        }
+
+        wait.until(ExpectedConditions.elementToBeClickable(rfqMenu)).click();
+        wait.until(ExpectedConditions.elementToBeClickable(rfqid)).click();
+        wait.until(d ->
+            ((JavascriptExecutor) d).executeScript("return document.readyState").equals("complete"));
+    }
+
+    // ── Click Add Row ─────────────────────────────────────────────
+    public void clickAddRow() {
+        int rowsBefore = driver.findElements(By.xpath("//table//tbody//tr")).size();
+
+        WebElement btn = wait.until(ExpectedConditions.elementToBeClickable(addRowBtn));
+        ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView(true);", btn);
+        ((JavascriptExecutor) driver).executeScript("window.scrollBy(0,-100);");
+        ((JavascriptExecutor) driver).executeScript("arguments[0].click();", btn);
+
+        try {
+            longWait.until(d ->
+                d.findElements(By.xpath("//table//tbody//tr")).size() > rowsBefore);
+        } catch (TimeoutException e) {
+            try { driver.switchTo().alert().accept(); } catch (Exception ignored) {}
+            System.out.println("Retrying Add Row click...");
+            ((JavascriptExecutor) driver).executeScript("arguments[0].click();", btn);
+            new WebDriverWait(driver, Duration.ofSeconds(30)).until(d ->
+                d.findElements(By.xpath("//table//tbody//tr")).size() > rowsBefore);
+        }
+
+        wait.until(d ->
+            d.findElements(By.xpath(
+                "//table//tbody//tr[last()]//input | //table//tbody//tr[last()]//textarea"))
+             .size() > 3);
+
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+        System.out.println("New row added. Total rows: "
+            + driver.findElements(By.xpath("//table//tbody//tr")).size());
+    }
+
+    // ── Wait for DOM to settle ────────────────────────────────────
+    private void waitForDom() {
+        try {
+            wait.until(ExpectedConditions.invisibilityOfElementLocated(
+                By.cssSelector(".toastr")));
+        } catch (Exception ignored) {}
+        wait.until(d ->
+            ((JavascriptExecutor) d).executeScript("return document.readyState").equals("complete"));
+    }
+
+    // ── Auto-discover TD indices from table header ────────────────
+    public void discoverTdIndices() {
+        System.out.println("=== Auto-discovering TD indices from table header ===");
+        tdMap.clear();
+
+        List<WebElement> headers = driver.findElements(
+            By.xpath("//table//thead//tr[last()]//th"));
+        if (headers.isEmpty()) {
+            headers = driver.findElements(
+                By.xpath("//table//thead//tr[last()]//td"));
+        }
+
+        for (int i = 0; i < headers.size(); i++) {
+            String text = headers.get(i).getText().trim()
+                .replaceAll("\\s+", " ").toLowerCase();
+            int tdIdx = i + 1;
+            System.out.println("  th[" + tdIdx + "] = '" + text + "'");
+
+            if (text.contains("part") && (text.contains("number") || text.contains("no") || text.contains("#"))) {
+                tdMap.put("partNumber", tdIdx);
+            } else if (text.contains("part") && text.contains("name") || text.equals("description")) {
+                tdMap.put("partName", tdIdx);
+            } else if (text.contains("resin") || text.contains("material")) {
+                tdMap.put("resin", tdIdx);
+            } else if (text.contains("cav")) {
+                tdMap.put("cav", tdIdx);
+            } else if (text.contains("injection") || text.contains("inj") || text.contains("runner")) {
+                tdMap.put("injSystem", tdIdx);
+            } else if (text.contains("gate")) {
+                tdMap.put("gate", tdIdx);
+            } else if (text.contains("eau") || text.contains("annual") || text.contains("volume")) {
+                tdMap.put("eau", tdIdx);
+            } else if (text.contains("steel")) {
+                tdMap.put("steel", tdIdx);
+            } else if (text.contains("ejection") || text.contains("eject")) {
+                tdMap.put("ejection", tdIdx);
+            } else if (text.contains("mold") && text.contains("feat") || text.contains("feature")) {
+                tdMap.put("moldFeatures", tdIdx);
+            } else if (text.contains("target") && text.contains("price")) {
+                tdMap.put("targetPrice", tdIdx);
+            } else if (text.contains("note") || text.contains("remark") || text.contains("comment")) {
+                tdMap.put("notes", tdIdx);
+            }
+        }
+
+        System.out.println("Discovered TD map: " + tdMap);
+
+        if (tdMap.size() < 5) {
+            System.out.println("WARNING: Header discovery insufficient. Falling back to positional.");
+            discoverTdIndicesByPosition();
+        }
+    }
+
+    // ── Fallback: discover by walking last row td elements ────────
+    private void discoverTdIndicesByPosition() {
+        System.out.println("=== Positional TD discovery (fallback) ===");
+        tdMap.clear();
+
+        List<WebElement> tds = driver.findElements(
+            By.xpath("//table//tbody//tr[last()]//td"));
+
+        // Column order after leading skip cells (checkbox/index/actions):
+        String[] colOrder = {
+            "partNumber", "partName", null,
+            "resin", "cav", "injSystem", "gate",
+            "eau", "steel", "ejection", "moldFeatures",
+            "targetPrice", null, null, "notes"
+        };
+
+        int leadingSkip = 0;
+        for (WebElement td : tds) {
+            boolean useful =
+                !td.findElements(By.tagName("input")).isEmpty()
+                || !td.findElements(By.tagName("textarea")).isEmpty()
+                || !td.findElements(By.tagName("select")).isEmpty()
+                || !td.findElements(By.xpath(".//span[contains(@class,'price')]")).isEmpty();
+            if (!useful) leadingSkip++;
+            else break;
+        }
+        System.out.println("  Leading non-input TDs: " + leadingSkip);
+
+        int colIdx = 0;
+        for (int i = leadingSkip; i < tds.size() && colIdx < colOrder.length; i++) {
+            int tdIdx = i + 1;
+            String colName = colOrder[colIdx];
+            if (colName != null) {
+                tdMap.put(colName, tdIdx);
+                System.out.println("  td[" + tdIdx + "] → " + colName);
+            } else {
+                System.out.println("  td[" + tdIdx + "] → (skip)");
+            }
+            colIdx++;
+        }
+        System.out.println("Positional TD map: " + tdMap);
+    }
+
+    // ── Enter text into a td (with broad fallbacks) ───────────────
+    private void enterText(int tdIndex, String value) {
+        if (value == null || value.trim().isEmpty()) {
+            System.out.println("  Skipped td[" + tdIndex + "] — empty");
+            return;
+        }
+
+        String base = "//table//tbody//tr[last()]//td[" + tdIndex + "]";
+
+        // Check what's available
+        boolean hasSpecificTextarea = !driver.findElements(
+            By.xpath(base + "//textarea[contains(@class,'rfq-textarea-display')]")).isEmpty();
+        boolean hasAnyTextarea = !driver.findElements(
+            By.xpath(base + "//textarea[not(contains(@style,'display:none')) and not(contains(@style,'display: none'))]")).isEmpty();
+        boolean hasSpecificInput = !driver.findElements(
+            By.xpath(base + "//input[contains(@class,'editable-field') and not(contains(@class,'rfq-hidden-input'))]")).isEmpty();
+        boolean hasAnyInput = !driver.findElements(
+            By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]")).isEmpty();
+        boolean hasSelect = !driver.findElements(
+            By.xpath(base + "//select")).isEmpty();
+        boolean hasContentEditable = !driver.findElements(
+            By.xpath(base + "//*[@contenteditable='true']")).isEmpty();
+
+        if (hasSpecificTextarea || hasAnyTextarea) {
+            By taBy = hasSpecificTextarea
+                ? By.xpath(base + "//textarea[contains(@class,'rfq-textarea-display')]")
+                : By.xpath(base + "//textarea[not(contains(@style,'display:none')) and not(contains(@style,'display: none'))]");
+
+            WebElement ta = wait.until(ExpectedConditions.visibilityOfElementLocated(taBy));
+            ((JavascriptExecutor) driver).executeScript(
+                "arguments[0].scrollIntoView({block:'center'});", ta);
+            ta.click();
+            ta.clear();
+            ta.sendKeys(value);
+            List<WebElement> hidden = driver.findElements(
+                By.xpath(base + "//input[contains(@class,'rfq-hidden-input')]"));
+            if (!hidden.isEmpty()) {
+                ((JavascriptExecutor) driver).executeScript(
+                    "arguments[0].value=arguments[1];"
+                    + "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+                    + "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+                    hidden.get(0), value);
+            }
+            waitForDom();
+            System.out.println("  td[" + tdIndex + "] textarea ← " + value);
+            return;
+        }
+
+        if (hasSpecificInput || hasAnyInput) {
+            By inpBy = hasSpecificInput
+                ? By.xpath(base + "//input[contains(@class,'editable-field') and not(contains(@class,'rfq-hidden-input'))]")
+                : By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]");
+
+            WebElement inp = wait.until(ExpectedConditions.elementToBeClickable(inpBy));
+            ((JavascriptExecutor) driver).executeScript(
+                "arguments[0].scrollIntoView({block:'center'});", inp);
+            inp.click();
+            inp.clear();
+            inp.sendKeys(value);
+            ((JavascriptExecutor) driver).executeScript(
+                "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+                + "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", inp);
+            waitForDom();
+            System.out.println("  td[" + tdIndex + "] input ← " + value);
+            return;
+        }
+
+        if (hasSelect) {
+            WebElement sel = wait.until(ExpectedConditions.elementToBeClickable(
+                By.xpath(base + "//select")));
+            new Select(sel).selectByVisibleText(value);
+            waitForDom();
+            System.out.println("  td[" + tdIndex + "] select ← " + value);
+            return;
+        }
+
+        if (hasContentEditable) {
+            WebElement el = driver.findElement(By.xpath(base + "//*[@contenteditable='true']"));
+            ((JavascriptExecutor) driver).executeScript(
+                "arguments[0].scrollIntoView({block:'center'});", el);
+            el.click();
+            el.clear();
+            el.sendKeys(value);
+            ((JavascriptExecutor) driver).executeScript(
+                "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+                + "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el);
+            waitForDom();
+            System.out.println("  td[" + tdIndex + "] contenteditable ← " + value);
+            return;
+        }
+
+        // Last resort: JS inject
+        try {
+            WebElement td = driver.findElements(
+                By.xpath("//table//tbody//tr[last()]//td")).get(tdIndex - 1);
+            ((JavascriptExecutor) driver).executeScript(
+                "var td=arguments[0], v=arguments[1];"
+                + "var el=td.querySelector('input')||td.querySelector('textarea');"
+                + "if(el){el.value=v;"
+                + "el.dispatchEvent(new Event('input',{bubbles:true}));"
+                + "el.dispatchEvent(new Event('change',{bubbles:true}));}"
+                + "else{td.innerText=v;}", td, value);
+            System.out.println("  td[" + tdIndex + "] JS-inject ← " + value);
+        } catch (Exception e) {
+            System.out.println("  Skipped td[" + tdIndex + "] — could not fill: " + e.getMessage());
+        }
+    }
+
+    // ── Handle Target Price popup ─────────────────────────────────
+    // ROOT CAUSE OF TIMEOUT: The popup was opening BUT the wait for h4 still failed.
+    // This happens when the modal title is rendered as a <div>, <span>, or <h5>
+    // instead of <h4>, OR when it is inside a Shadow DOM, OR the text has
+    // invisible characters/line breaks.
+    //
+    // FIX: We do NOT wait for any title element.
+    // Instead we wait directly for the "Target Price Set" INPUT FIELD to be
+    // clickable inside the modal — if that appears, the popup is fully open.
+    public void handleTargetPricePopup(String rawPrice) {
+        String price = rawPrice.replaceAll("[^0-9.]", "").trim();
+        if (price.isEmpty()) price = "0";
+        System.out.println("  Opening Target Price popup for value: " + price);
+
+        By modalBy = By.id("customTargetPopupModal");
+
+        // HTML confirmed: <span class="rfq-form-control price-input editable-field"
+        //                       data-targetprice="..." data-line="...">
+        // JS event listener on this span opens the modal on double-click.
+        WebElement priceSpan = wait.until(ExpectedConditions.elementToBeClickable(
+            By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]") ));
+
+        ((JavascriptExecutor) driver).executeScript(
+            "arguments[0].scrollIntoView({block:'center'});", priceSpan);
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+
+        System.out.println("  Price span: class='" + priceSpan.getAttribute("class")
+            + "' data-line='" + priceSpan.getAttribute("data-line") + "'");
+
+        // Double-click to open popup
+        new Actions(driver).doubleClick(priceSpan).perform();
+        System.out.println("  Double-clicked price span");
+        try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+
+        // Retry if modal not open yet
+        for (int attempt = 2; attempt <= 3; attempt++) {
+            try {
+                List<WebElement> m = driver.findElements(modalBy);
+                if (!m.isEmpty() && m.get(0).isDisplayed()) break;
+            } catch (Exception ignored) {}
+            System.out.println("  Modal not open, JS dblclick attempt " + attempt);
+            ((JavascriptExecutor) driver).executeScript(
+                "arguments[0].dispatchEvent(new MouseEvent('dblclick'," +
+                "{bubbles:true,cancelable:true,view:window}));", priceSpan);
+            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+        }
+
+        // Verify modal is open
+        boolean modalOpen = false;
+        try {
+            List<WebElement> m = driver.findElements(modalBy);
+            modalOpen = !m.isEmpty() && m.get(0).isDisplayed();
+        } catch (Exception ignored) {}
+        if (!modalOpen) {
+            throw new RuntimeException(
+                "Modal #customTargetPopupModal did not open after double-clicking span.price-input.");
+        }
+        System.out.println("  Modal is open");
+
+        WebElement modal = driver.findElement(modalBy);
+
+        // Wait for inputs
+        new WebDriverWait(driver, Duration.ofSeconds(10)).until(d ->
+            !modal.findElements(By.xpath(".//input[not(@type='hidden')]")).isEmpty());
+
+        List<WebElement> modalInputs = modal.findElements(
+            By.xpath(".//input[not(@type='hidden')]"));
+        System.out.println("  Modal inputs: " + modalInputs.size());
+
+        // Target Price Set = first input
+        clearAndType(modalInputs.get(0), price);
+        System.out.println("  Target Price Set <- " + price);
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+
+        fillModalField(modal, "Margin Factor",    "10");
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        fillModalField(modal, "Shipping Factor",  "5");
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        fillModalField(modal, "Tariff Factor",    "12");
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        fillModalField(modal, "CPS Handling Cost","720");
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+
+        // Find Save button - not a close button
+        List<WebElement> allBtns = modal.findElements(By.tagName("button"));
+        System.out.println("  Buttons in modal: " + allBtns.size());
+        WebElement saveBtn = null;
+        for (WebElement btn : allBtns) {
+            String cls = btn.getAttribute("class") != null ? btn.getAttribute("class").toLowerCase() : "";
+            String txt = btn.getText().trim();
+            String oc  = btn.getAttribute("onclick") != null ? btn.getAttribute("onclick") : "";
+            System.out.println("    btn text='" + txt + "' class='" + cls + "' onclick='" + oc + "'");
+            boolean isClose = cls.contains("close") || txt.equals("x") || txt.equals("x")
+                || txt.equalsIgnoreCase("cancel") || txt.equalsIgnoreCase("close");
+            if (!isClose && saveBtn == null) saveBtn = btn;
+        }
+        if (saveBtn == null && !allBtns.isEmpty()) saveBtn = allBtns.get(allBtns.size() - 1);
+        if (saveBtn == null) throw new RuntimeException("No Save button in #customTargetPopupModal.");
+
+        ((JavascriptExecutor) driver).executeScript(
+            "arguments[0].scrollIntoView({block:'center'});", saveBtn);
+        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+        ((JavascriptExecutor) driver).executeScript("arguments[0].click();", saveBtn);
+        System.out.println("  Save clicked: '" + saveBtn.getText() + "'");
+
+        // Wait for modal to close
+        try {
+            new WebDriverWait(driver, Duration.ofSeconds(20)).until(d -> {
+                try {
+                    List<WebElement> m = d.findElements(modalBy);
+                    return m.isEmpty() || !m.get(0).isDisplayed();
+                } catch (Exception ex) { return true; }
+            });
+            System.out.println("  Modal closed");
+        } catch (Exception e) {
+            System.out.println("  Modal still open - retrying Save...");
+            ((JavascriptExecutor) driver).executeScript("arguments[0].click();", saveBtn);
+            try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+        }
+
+        waitForDom();
+        System.out.println("  Target Price popup done");
+    }
+
+    // ── Clear a field and type a value, firing all necessary events ──
+    private void clearAndType(WebElement field, String value) {
+        ((JavascriptExecutor) driver).executeScript(
+            "arguments[0].scrollIntoView({block:'center'});", field);
+        field.click();
+        field.sendKeys(Keys.chord(Keys.CONTROL, "a"));
+        field.sendKeys(Keys.DELETE);
+        field.clear();
+        ((JavascriptExecutor) driver).executeScript(
+            "arguments[0].value=''; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
+            field);
+        field.sendKeys(value);
+        ((JavascriptExecutor) driver).executeScript(
+            "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+            + "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", field);
+    }
+
+    // ── Fill a popup field scoped inside a modal WebElement ──────
+    // Scoping to the modal element prevents matching fields in the background table.
+    private void fillModalField(WebElement modal, String labelText, String value) {
+        try {
+            WebElement field = modal.findElement(
+                By.xpath(".//label[contains(text(),'" + labelText + "')]"
+                    + "/following::input[not(@type='hidden')][1]"));
+            clearAndType(field, value);
+            System.out.println("  " + labelText + " ← " + value);
+        } catch (Exception e) {
+            System.out.println("  WARNING: Could not fill [" + labelText + "]: " + e.getMessage());
+        }
+    }
+
+    // ── Helper: fill a popup field by label text ──────────────────
+    // ── Fill all columns in last row ──────────────────────────────
+    // Excel rowData (col 0 Item was skipped in readExcelData):
+    // [0]=PartNumber [1]=PartName  [2]=Resin    [3]=Cav
+    // [4]=InjSystem  [5]=Gate      [6]=EAU      [7]=Steel
+    // [8]=Ejection   [9]=MoldFeat  [10]=TargetPrice [11]=CADFile [12]=Notes
+    public void fillRowData(String[] rowData) {
+        int tdCount = driver.findElements(
+            By.xpath("//table//tbody//tr[last()]//td")).size();
+        System.out.println("  TD count=" + tdCount + " | tdMap=" + tdMap);
+
+        if (tdMap.containsKey("partNumber")) {
+            // Use header-discovered indices
+            fillByMap("partNumber",   rowData[0],  "Part Number");
+            fillByMap("partName",     rowData[1],  "Part Name");
+            fillByMap("resin",        rowData[2],  "Resin");
+            fillByMap("cav",          rowData[3],  "Cav");
+            fillByMap("injSystem",    rowData[4],  "Injection System");
+            fillByMap("gate",         rowData[5],  "Gate");
+            fillByMap("eau",          rowData[6],  "EAU");
+            fillByMap("steel",        rowData[7],  "Steel");
+            fillByMap("ejection",     rowData[8],  "Ejection");
+            fillByMap("moldFeatures", rowData[9],  "Mold Features");
+            fillByMap("notes",        rowData[12], "Notes");
+        } else {
+            // Hard-coded positional fallback
+            // Your log showed td[5]=no input, td[6]=textarea, td[7]=input, td[9]=textarea
+            // Corrected interpretation:
+            //   td[5]  → Part Number: has NO standard input (maybe contenteditable or a special widget)
+            //   td[6]  → textarea = Resin  (was wrongly given Part Number before)
+            //   td[7]  → input    = Part Name
+            //   td[8]  → (picture/file - skip)
+            //   td[9]  → textarea = Cav
+            //   td[10] → input    = Injection System
+            //   td[11] → input    = Gate
+            //   td[12] → input    = EAU
+            //   td[13] → textarea = Steel
+            //   td[14] → (no input) = Ejection? Try anyway
+            //   td[15] → (no input) = Mold Features? Try anyway
+            //   td[19] → Notes
+            int o = (tdCount >= 33) ? 1 : 0;
+
+            enterText(5  + o, rowData[0]);   // Part Number
+            enterText(7  + o, rowData[1]);   // Part Name
+            enterText(6  + o, rowData[2]);   // Resin  (textarea at td[6])
+            enterText(9  + o, rowData[3]);   // Cav    (textarea at td[9])
+            enterText(10 + o, rowData[4]);   // Injection System
+            enterText(11 + o, rowData[5]);   // Gate
+            enterText(12 + o, rowData[6]);   // EAU
+            enterText(13 + o, rowData[7]);   // Steel
+            enterText(14 + o, rowData[8]);   // Ejection
+            enterText(15 + o, rowData[9]);   // Mold Features
+            enterText(19 + o, rowData[12]);  // Notes
+        }
+
+        // Always last — opens popup
+        handleTargetPricePopup(rowData[10]);
+    }
+
+    // ── Fill using discovered map ─────────────────────────────────
+    private void fillByMap(String colKey, String value, String colLabel) {
+        if (!tdMap.containsKey(colKey)) {
+            System.out.println("  WARNING: No TD found for: " + colLabel);
+            return;
+        }
+        System.out.println("  Filling [" + colLabel + "] at td[" + tdMap.get(colKey) + "]");
+        enterText(tdMap.get(colKey), value);
+    }
+
+    // ── Read Excel data ───────────────────────────────────────────
+    public String[][] readExcelData(String filePath) throws Exception {
+        java.io.File file = new java.io.File(filePath);
+        System.out.println("Reading Excel: " + file.getAbsolutePath());
+
+        FileInputStream fis      = new FileInputStream(file);
+        Workbook        workbook = new XSSFWorkbook(fis);
+        Sheet           sheet    = workbook.getSheetAt(0);
+        DataFormatter   formatter = new DataFormatter();
+
+        int rowCount = sheet.getPhysicalNumberOfRows();
+        int dataCols = 13;
+        String[][] data = new String[rowCount - 1][dataCols];
+
+        for (int i = 1; i < rowCount; i++) {
+            Row row = sheet.getRow(i);
+            for (int j = 0; j < dataCols; j++) {
+                Cell cell = (row == null) ? null : row.getCell(j + 1);
+                data[i - 1][j] = (cell == null) ? "" : formatter.formatCellValue(cell);
+            }
+        }
+
+        workbook.close();
+        fis.close();
+        System.out.println("Total rows read: " + (rowCount - 1));
+        return data;
+    }
+
+    // ── Send Email ────────────────────────────────────────────────
+    public void clickSendEmail() {
+        wait.until(ExpectedConditions.elementToBeClickable(sendEmailBtn)).click();
+        try {
+            Alert alert = wait.until(ExpectedConditions.alertIsPresent());
+            System.out.println("Alert: " + alert.getText());
+            alert.accept();
+        } catch (Exception ignored) {}
+    }
+
+    // ── Verify email sent ─────────────────────────────────────────
+    public boolean isEmailSentSuccessfully() {
+        try {
+            wait.until(ExpectedConditions.visibilityOfElementLocated(
+                By.xpath("//*[contains(text(),'Email sent') or "
+                    + "contains(text(),'Success') or "
+                    + "contains(text(),'sent successfully')]")));
+            return true;
+        } catch (Exception e) {
+            return driver.getPageSource().contains("sent")
+                || driver.getPageSource().contains("Success");
+        }
+    }
+}

@@ -1,0 +1,16 @@
+<!-- 
+    Full regression suite — used by default in Jenkins.
+    Jenkins can override with -DsuiteFile=testng-smoke.xml
+ -->
+<suite name="CPS-Full-Suite" verbose="1" parallel="false">
+<listeners>
+<!--  Allure listener captures results into target/allure-results  -->
+<listener class-name="io.qameta.allure.testng.AllureTestNg"/>
+</listeners>
+<test name="RFQ-Details-Tests">
+<parameter name="browser" value="chrome"/>
+<classes>
+<class name="runners.TestRunner"/>
+</classes>
+</test>
+</suite>

@@ -1,0 +1,104 @@
+package stepdefinitions;
+
+import org.openqa.selenium.WebDriver;
+import org.testng.Assert;
+
+import Pages.RFQ_DetailsPage;
+import hooks.Hooks;
+import io.cucumber.java.en.*;
+
+public class RFQ_Details {
+
+    WebDriver driver;
+    RFQ_DetailsPage page;
+
+    // ── Given: navigate to RFQ details page ──────────────────────
+    @Given("User is on the RFQ details page")
+    public void openPage() {
+        driver = Hooks.driver;
+        page   = new RFQ_DetailsPage(driver);
+        page.navigateToRFQPage();
+    }
+
+    // ── When: click a named button ───────────────────────────────
+    @When("User clicks on {string} button")
+    public void clickButton(String name) {
+        switch (name) {
+            case "Add Row":
+                page.clickAddRow();
+                break;
+            case "Send Email":
+                page.clickSendEmail();
+                break;
+            default:
+                throw new RuntimeException("Unknown button: " + name);
+        }
+    }
+
+    // ── When: fill all Excel rows ─────────────────────────────────
+    @When("User enters item details from Excel sheet {string}")
+    public void enterData(String filePath) throws Exception {
+        System.out.println("Reading Excel from: " + filePath);
+
+        String[][] data = page.readExcelData(filePath);
+        System.out.println("Total rows to process: " + data.length);
+
+        page.discoverTdIndices();
+
+        for (int i = 0; i < data.length; i++) {
+            String[] rowData      = data[i];
+            int      excelRowIndex = i + 1;
+
+            System.out.println("\n=== Processing row " + excelRowIndex
+                + " | Part: " + rowData[0] + " ===");
+
+            if (i > 0) {
+                page.clickAddRow();
+            }
+
+            page.fillRowData(rowData, excelRowIndex);
+        }
+    }
+
+    // ── When: handle "Create Version" popup ──────────────────────
+    // Popup text: "Your RFQ NT79 is updated with the new changes.
+    //              Do you want to create a new version or save in the existing version?"
+    // Buttons: [Create Version] [NO]
+    // HTML: <button class="btn btn-create" onclick="createVersion()">Create Version</button>
+    @When("User creates a new version")
+    public void createNewVersion() {
+        page.handleCreateVersionPopup();
+    }
+
+    // ── When: add a note in the Notes popup ──────────────────────
+    // HTML: <textarea id="notesText" placeholder="Enter your notes here...">
+    //       <button class="notes-save-btn" id="saveNotes">Save</button>
+    @When("User adds a note {string}")
+    public void addNote(String noteText) {
+        page.handleNotesPopup(noteText);
+    }
+
+    // ── When: select vendors in the vendor popup ──────────────────
+    // vendors: comma-separated list e.g. "Test_1,Test_2"
+    // HTML: <div id="bccField" onclick="openVendorPopup()">
+    //       Vendor list rendered as checkboxes with vendor name labels
+    @When("User selects vendors {string}")
+    public void selectVendors(String vendorsCsv) {
+        String[] vendors = vendorsCsv.split(",");
+        page.selectVendors(vendors);
+    }
+
+    // ── When: click Send Email inside compose mail popup ─────────
+    // HTML: <button type="button" class="send-btn" onclick="sendMail();">Send Email</button>
+    @When("User sends the email")
+    public void sendEmail() {
+        page.clickSendEmailInCompose();
+    }
+
+    // ── Then: verify email sent ───────────────────────────────────
+    @Then("item should be added and email sent to vendor successfully")
+    public void verify() {
+        Assert.assertTrue(page.isEmailSentSuccessfully(),
+            "Email was NOT sent successfully to vendor");
+    }
+}

@@ -1,0 +1,1096 @@
+package Pages;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.*;
+import org.openqa.selenium.*;
+import org.openqa.selenium.interactions.Actions;
+import org.openqa.selenium.support.ui.*;
+
+import java.awt.Robot;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.KeyEvent;
+import java.io.*;
+import java.time.Duration;
+import java.util.*;
+
+public class RFQ_DetailsPage {
+
+    WebDriver driver;
+    WebDriverWait wait;
+    WebDriverWait longWait;
+    WebDriverWait alertWait;
+    JavascriptExecutor js;
+
+    // Main window handle — captured at construction and after navigation
+    private String mainWindowHandle;
+
+    // ── KEY FIX: track the data-line of the newly added row ──────
+    // The table has multiple <tbody> sections, so counting
+    // //table//tbody//tr across ALL tbodys gives the wrong index.
+    // Instead, we read the data-line attribute from the last price-input
+    // span after each "Add Row" click. Every row-scoped XPath then
+    // anchors on  //tr[.//span[@data-line='N']]  which is unique and stable.
+    private String currentDataLine = null;
+
+    private Map<String, Integer> tdMap   = new LinkedHashMap<>();
+    private Map<Integer, String> imageMap = new LinkedHashMap<>();
+
+    private static final int MAX_ATTEMPTS = 3;
+
+    // ── Locators ──────────────────────────────────────────────────
+    By procurementMenu = By.xpath("//span[contains(text(),'Procurement')]");
+    By rfqMenu         = By.xpath("//span[contains(text(),'RFQ')]");
+    By rfqid           = By.xpath("//a[contains(@onclick,'redirectToRFQ')]");
+    By addRowBtn       = By.id("addRowBtn");
+    By sendEmailBtn    = By.id("sendMail");
+
+    public RFQ_DetailsPage(WebDriver driver) {
+        this.driver = driver;
+        this.js     = (JavascriptExecutor) driver;
+        this.wait      = new WebDriverWait(driver, Duration.ofSeconds(20));
+        this.longWait  = new WebDriverWait(driver, Duration.ofSeconds(40));
+        this.alertWait = new WebDriverWait(driver, Duration.ofMillis(400));
+        this.mainWindowHandle = driver.getWindowHandle();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // WINDOW GUARD
+    // ─────────────────────────────────────────────────────────────
+
+    private void ensureMainWindow() {
+        try {
+            Set<String> handles = driver.getWindowHandles();
+            if (handles.isEmpty())
+                throw new RuntimeException("All browser windows are closed.");
+            if (handles.contains(mainWindowHandle)) {
+                driver.switchTo().window(mainWindowHandle);
+            } else {
+                mainWindowHandle = handles.iterator().next();
+                driver.switchTo().window(mainWindowHandle);
+                System.out.println("  [WARN] Main window lost — switched to: " + mainWindowHandle);
+            }
+        } catch (NoSuchWindowException e) {
+            Set<String> handles = driver.getWindowHandles();
+            if (!handles.isEmpty()) {
+                mainWindowHandle = handles.iterator().next();
+                driver.switchTo().window(mainWindowHandle);
+                System.out.println("  [WARN] NoSuchWindowException recovered — switched to: " + mainWindowHandle);
+            } else {
+                throw new RuntimeException("All browser windows closed — cannot recover.", e);
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ROW XPATH — anchored on data-line, NOT row index
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Returns XPath for the current data row, anchored by its data-line attribute.
+     * Falls back to tr[last()] ONLY when currentDataLine is unknown.
+     *
+     * Why data-line? The table renders multiple <tbody> groups.
+     * //table//tbody//tr[N] counts across ALL tbodys and lands on the wrong
+     * group row which has 0 editable TDs. data-line is unique per editable row.
+     */
+    private String rowXPath() {
+        if (currentDataLine != null) {
+            return "//table//tbody//tr[.//span[contains(@class,'price-input') and @data-line='" + currentDataLine + "']]";
+        }
+        System.out.println("  [WARN] currentDataLine unknown — falling back to tr[last()]");
+        return "//table//tbody//tr[last()]";
+    }
+
+    private String rowTdXPath(int tdIndex) {
+        return rowXPath() + "//td[" + tdIndex + "]";
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // HELPERS
+    // ─────────────────────────────────────────────────────────────
+
+    private void sleep(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
+    }
+
+    private void dismissAlertIfPresent() {
+        try {
+            Alert alert = alertWait.until(ExpectedConditions.alertIsPresent());
+            System.out.println("  [Alert] Dismissing: " + alert.getText());
+            alert.accept();
+        } catch (Exception ignored) {}
+    }
+
+    private void clearToastr() {
+        try {
+            js.executeScript(
+                "var t=document.querySelector('#toast-container,.toastr,.toastr-message');" +
+                "if(t && t.parentNode){t.parentNode.removeChild(t);}");
+        } catch (Exception ignored) {}
+    }
+
+    private void waitForToastrToDisappear() {
+        try {
+            List<WebElement> toastrs = driver.findElements(
+                By.cssSelector("#toast-container,.toastr,.toastr-message"));
+            if (toastrs.isEmpty()) return;
+            clearToastr();
+            sleep(150);
+        } catch (Exception ignored) {}
+    }
+
+    private void safeSendKeys(By locator, String value) {
+        for (int i = 0; i < MAX_ATTEMPTS; i++) {
+            try {
+                ensureMainWindow();
+                dismissAlertIfPresent();
+                waitForToastrToDisappear();
+
+                WebElement el = wait.until(ExpectedConditions.presenceOfElementLocated(locator));
+                js.executeScript("arguments[0].scrollIntoView({block:'center'});", el);
+                sleep(80);
+
+                try {
+                    if (!el.isDisplayed() || !el.isEnabled()) {
+                        jsSetAndFire(el, value); return;
+                    }
+                    try { el.click(); }
+                    catch (ElementClickInterceptedException e2) {
+                        clearToastr(); sleep(100);
+                        js.executeScript("arguments[0].click();", el);
+                    }
+                    el.clear();
+                    el.sendKeys(value);
+                    fireEvents(el);
+                    return;
+                } catch (ElementNotInteractableException e) {
+                    jsSetAndFire(el, value); return;
+                }
+            } catch (StaleElementReferenceException e) {
+                System.out.println("  [StaleRetry] safeSendKeys attempt " + (i + 1));
+                sleep(300);
+            }
+        }
+        throw new RuntimeException("safeSendKeys failed after " + MAX_ATTEMPTS + " attempts: " + locator);
+    }
+
+    private void jsSetAndFire(WebElement el, String value) {
+        js.executeScript(
+            "arguments[0].value=arguments[1];" +
+            "arguments[0].dispatchEvent(new Event('focus',  {bubbles:true}));" +
+            "arguments[0].dispatchEvent(new Event('input',  {bubbles:true}));" +
+            "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));" +
+            "arguments[0].dispatchEvent(new Event('blur',   {bubbles:true}));",
+            el, value);
+    }
+
+    private void fireEvents(WebElement el) {
+        js.executeScript(
+            "arguments[0].dispatchEvent(new Event('input',  {bubbles:true}));" +
+            "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", el);
+    }
+
+    private void safeJsSetValue(By locator, String value) {
+        for (int i = 0; i < MAX_ATTEMPTS; i++) {
+            try {
+                jsSetAndFire(driver.findElement(locator), value); return;
+            } catch (StaleElementReferenceException e) {
+                System.out.println("  [StaleRetry] safeJsSetValue attempt " + (i + 1));
+                sleep(300);
+            }
+        }
+    }
+
+    private void waitForDom() {
+        dismissAlertIfPresent();
+        wait.until(d -> js.executeScript("return document.readyState").equals("complete"));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // NAVIGATE
+    // ─────────────────────────────────────────────────────────────
+
+    public void navigateToRFQPage() {
+        wait.until(d -> js.executeScript("return document.readyState").equals("complete"));
+        WebElement procurement = wait.until(ExpectedConditions.elementToBeClickable(procurementMenu));
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", procurement);
+        try { procurement.click(); }
+        catch (Exception e) { js.executeScript("arguments[0].click();", procurement); }
+
+        wait.until(ExpectedConditions.elementToBeClickable(rfqMenu)).click();
+        wait.until(ExpectedConditions.elementToBeClickable(rfqid)).click();
+        wait.until(d -> js.executeScript("return document.readyState").equals("complete"));
+        mainWindowHandle = driver.getWindowHandle();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ADD ROW — discovers data-line of newly added row
+    // ─────────────────────────────────────────────────────────────
+
+    public void clickAddRow() {
+        ensureMainWindow();
+        dismissAlertIfPresent();
+        waitForToastrToDisappear();
+
+        // Snapshot existing data-lines BEFORE clicking Add Row
+        Set<String> dataLinesBefore = getExistingDataLines();
+
+        WebElement btn = wait.until(ExpectedConditions.elementToBeClickable(addRowBtn));
+        js.executeScript("arguments[0].scrollIntoView(true);window.scrollBy(0,-100);", btn);
+        js.executeScript("arguments[0].click();", btn);
+
+        // Wait for a NEW data-line span to appear
+        try {
+            longWait.until(d -> {
+                Set<String> current = getExistingDataLines();
+                current.removeAll(dataLinesBefore);
+                return !current.isEmpty();
+            });
+        } catch (TimeoutException e) {
+            System.out.println("  [WARN] New data-line not detected — retrying click");
+            dismissAlertIfPresent();
+            js.executeScript("arguments[0].click();", btn);
+            try {
+                new WebDriverWait(driver, Duration.ofSeconds(40)).until(d -> {
+                    Set<String> current = getExistingDataLines();
+                    current.removeAll(dataLinesBefore);
+                    return !current.isEmpty();
+                });
+            } catch (TimeoutException e2) {
+                System.out.println("  [ERROR] Still no new data-line after retry");
+            }
+        }
+
+        // Find the new data-line value
+        Set<String> dataLinesAfter = getExistingDataLines();
+        dataLinesAfter.removeAll(dataLinesBefore);
+
+        if (!dataLinesAfter.isEmpty()) {
+            currentDataLine = dataLinesAfter.stream()
+                .max(Comparator.comparingInt(s -> {
+                    try { return Integer.parseInt(s); } catch (Exception e) { return 0; }
+                }))
+                .orElse(null);
+            System.out.println("  New row data-line=" + currentDataLine);
+        } else {
+            // Fallback: last price-input span in the DOM
+            try {
+                List<WebElement> spans = driver.findElements(
+                    By.xpath("//table//tbody//tr//span[contains(@class,'price-input')]"));
+                if (!spans.isEmpty()) {
+                    currentDataLine = spans.get(spans.size() - 1).getAttribute("data-line");
+                    System.out.println("  [Fallback] data-line from last span=" + currentDataLine);
+                }
+            } catch (Exception e) {
+                System.out.println("  [WARN] Could not determine data-line: " + e.getMessage());
+                currentDataLine = null;
+            }
+        }
+
+        // Wait for row inputs to be ready
+        if (currentDataLine != null) {
+            String rowXp = rowXPath();
+            try {
+                new WebDriverWait(driver, Duration.ofSeconds(10))
+                    .until(d -> !d.findElements(By.xpath(rowXp + "//input|" + rowXp + "//textarea")).isEmpty());
+            } catch (TimeoutException ignored) {
+                System.out.println("  [WARN] New row fields slow — continuing.");
+            }
+        }
+
+        sleep(200);
+        System.out.println("New row added. data-line=" + currentDataLine);
+    }
+
+    /** Returns the set of all data-line attribute values currently in the table. */
+    private Set<String> getExistingDataLines() {
+        Set<String> result = new LinkedHashSet<>();
+        try {
+            List<WebElement> spans = driver.findElements(
+                By.xpath("//table//tbody//tr//span[contains(@class,'price-input') and @data-line]"));
+            for (WebElement s : spans) {
+                String dl = s.getAttribute("data-line");
+                if (dl != null && !dl.isEmpty()) result.add(dl);
+            }
+        } catch (Exception ignored) {}
+        return result;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // DISCOVER TD INDICES
+    // ─────────────────────────────────────────────────────────────
+
+    public void discoverTdIndices() {
+        System.out.println("=== Auto-discovering TD indices ===");
+        tdMap.clear();
+
+        List<WebElement> headers = driver.findElements(By.xpath("//table//thead//tr[last()]//th"));
+        if (headers.isEmpty())
+            headers = driver.findElements(By.xpath("//table//thead//tr[last()]//td"));
+
+        for (int i = 0; i < headers.size(); i++) {
+            String text = headers.get(i).getText().trim().replaceAll("\\s+", " ").toLowerCase();
+            int tdIdx = i + 1;
+            if      (text.contains("part") && (text.contains("number") || text.contains("no") || text.contains("#")))
+                tdMap.put("partNumber", tdIdx);
+            else if ((text.contains("part") && text.contains("name")) || text.equals("description"))
+                tdMap.put("partName", tdIdx);
+            else if (text.contains("resin") || text.contains("material"))
+                tdMap.put("resin", tdIdx);
+            else if (text.contains("cav"))
+                tdMap.put("cav", tdIdx);
+            else if (text.contains("injection") || text.contains("inj") || text.contains("runner"))
+                tdMap.put("injSystem", tdIdx);
+            else if (text.contains("gate"))
+                tdMap.put("gate", tdIdx);
+            else if (text.contains("eau") || text.contains("annual") || text.contains("volume"))
+                tdMap.put("eau", tdIdx);
+            else if (text.contains("steel"))
+                tdMap.put("steel", tdIdx);
+            else if (text.contains("ejection") || text.contains("eject"))
+                tdMap.put("ejection", tdIdx);
+            else if ((text.contains("mold") && text.contains("feat")) || text.contains("feature"))
+                tdMap.put("moldFeatures", tdIdx);
+            else if (text.contains("target") && text.contains("price"))
+                tdMap.put("targetPrice", tdIdx);
+            else if (text.contains("note") || text.contains("remark") || text.contains("comment"))
+                tdMap.put("notes", tdIdx);
+        }
+
+        System.out.println("Discovered TD map: " + tdMap);
+        if (tdMap.size() < 5) {
+            System.out.println("WARNING: Header discovery insufficient. Falling back to positional.");
+            discoverTdIndicesByPosition();
+        }
+    }
+
+    private void discoverTdIndicesByPosition() {
+        System.out.println("=== Positional TD discovery (fallback) ===");
+        tdMap.clear();
+
+        // Use data-line anchored XPath — correct row guaranteed
+        String rowXp = rowXPath();
+        List<WebElement> tds = driver.findElements(By.xpath(rowXp + "//td"));
+        System.out.println("  TDs found in current row: " + tds.size());
+
+        String[] colOrder = { "partNumber", "partName", null, "resin", "cav",
+                              "injSystem", "gate", "eau", "steel", "ejection",
+                              "moldFeatures", "targetPrice", null, null, "notes" };
+
+        int leadingSkip = 0;
+        for (WebElement td : tds) {
+            boolean useful = !td.findElements(By.tagName("input")).isEmpty()
+                || !td.findElements(By.tagName("textarea")).isEmpty()
+                || !td.findElements(By.tagName("select")).isEmpty()
+                || !td.findElements(By.xpath(".//span[contains(@class,'price')]")).isEmpty();
+            if (!useful) leadingSkip++;
+            else break;
+        }
+
+        int colIdx = 0;
+        for (int i = leadingSkip; i < tds.size() && colIdx < colOrder.length; i++) {
+            int tdIdx = i + 1;
+            String colName = colOrder[colIdx];
+            if (colName != null) {
+                tdMap.put(colName, tdIdx);
+                System.out.println("  td[" + tdIdx + "] → " + colName);
+            }
+            colIdx++;
+        }
+        System.out.println("Positional TD map: " + tdMap);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ENTER TEXT
+    // ─────────────────────────────────────────────────────────────
+
+    private void enterText(int tdIndex, String value) {
+        ensureMainWindow();
+
+        if (value == null || value.trim().isEmpty()) {
+            System.out.println("  Skipped td[" + tdIndex + "] — empty");
+            return;
+        }
+
+        String base = rowTdXPath(tdIndex);
+
+        List<WebElement> textareas = driver.findElements(By.xpath(base + "//textarea"));
+        List<WebElement> inputs    = driver.findElements(By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]"));
+        List<WebElement> selects   = driver.findElements(By.xpath(base + "//select"));
+
+        if (!textareas.isEmpty()) {
+            WebElement target = null;
+            for (WebElement ta : textareas) {
+                String style = ta.getAttribute("style");
+                if (style != null && (style.contains("display: none") || style.contains("display:none")))
+                    continue;
+                target = ta;
+                break;
+            }
+
+            if (target == null) {
+                System.out.println("  td[" + tdIndex + "] textarea hidden — clicking trigger span");
+                List<WebElement> spans = driver.findElements(
+                    By.xpath(base + "//span[not(contains(@style,'display:none'))]"));
+                if (!spans.isEmpty()) {
+                    try { js.executeScript("arguments[0].click();", spans.get(0)); sleep(150); }
+                    catch (Exception ignored) {}
+                }
+                textareas = driver.findElements(By.xpath(base + "//textarea"));
+                for (WebElement ta : textareas) {
+                    String style = ta.getAttribute("style");
+                    if (style == null || (!style.contains("display:none") && !style.contains("display: none"))) {
+                        target = ta; break;
+                    }
+                }
+            }
+
+            if (target != null) {
+                By taBy = By.xpath(base + "//textarea[contains(@class,'rfq-textarea-display')]");
+                if (!driver.findElements(taBy).isEmpty()) {
+                    safeSendKeys(taBy, value);
+                } else {
+                    final WebElement ft = target;
+                    js.executeScript("arguments[0].scrollIntoView({block:'center'});", ft);
+                    try { ft.click(); ft.clear(); ft.sendKeys(value); fireEvents(ft); }
+                    catch (ElementNotInteractableException e) { jsSetAndFire(ft, value); }
+                }
+                List<WebElement> hiddenInputs = driver.findElements(
+                    By.xpath(base + "//input[contains(@class,'rfq-hidden-input')]"));
+                if (!hiddenInputs.isEmpty())
+                    safeJsSetValue(By.xpath(base + "//input[contains(@class,'rfq-hidden-input')]"), value);
+                System.out.println("  td[" + tdIndex + "] textarea ← " + value);
+                return;
+            }
+        }
+
+        if (!inputs.isEmpty()) {
+            By inpBy = By.xpath(base + "//input[contains(@class,'editable-field') and not(contains(@class,'rfq-hidden-input'))]");
+            if (driver.findElements(inpBy).isEmpty())
+                inpBy = By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]");
+            safeSendKeys(inpBy, value);
+            System.out.println("  td[" + tdIndex + "] input ← " + value);
+            return;
+        }
+
+        if (!selects.isEmpty()) {
+            By selBy = By.xpath(base + "//select");
+            for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+                try {
+                    new Select(wait.until(ExpectedConditions.elementToBeClickable(selBy)))
+                        .selectByVisibleText(value);
+                    System.out.println("  td[" + tdIndex + "] select ← " + value);
+                    return;
+                } catch (StaleElementReferenceException e) { sleep(300); }
+            }
+        }
+
+        // Last resort JS inject
+        try {
+            WebElement td = driver.findElement(By.xpath("(" + rowXPath() + "//td)[" + tdIndex + "]"));
+            js.executeScript(
+                "var td=arguments[0],v=arguments[1];" +
+                "var el=td.querySelector('textarea')||td.querySelector('input');" +
+                "if(el){el.value=v;" +
+                "el.dispatchEvent(new Event('input',{bubbles:true}));" +
+                "el.dispatchEvent(new Event('change',{bubbles:true}));}" +
+                "else{td.innerText=v;}",
+                td, value);
+            System.out.println("  td[" + tdIndex + "] JS-inject ← " + value);
+        } catch (Exception e) {
+            System.out.println("  Skipped td[" + tdIndex + "] — " + e.getMessage());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // UPLOAD IMAGE
+    // ─────────────────────────────────────────────────────────────
+
+    public void uploadImageForRow(String imagePath) {
+        ensureMainWindow();
+
+        if (imagePath == null || imagePath.isEmpty()) {
+            System.out.println("  [Image] No image — skipping");
+            return;
+        }
+        File imgFile = new File(imagePath);
+        if (!imgFile.exists()) {
+            System.out.println("  [Image] File not found: " + imagePath);
+            return;
+        }
+
+        // Use tracked data-line directly — no DOM lookup needed
+        String actualDataLine = currentDataLine;
+        if (actualDataLine == null || actualDataLine.isEmpty()) {
+            System.out.println("  [Image] data-line unknown — skipping");
+            return;
+        }
+
+        System.out.println("  [Image] Uploading for data-line=" + actualDataLine + " | file=" + imgFile.getName());
+
+        By uploadLinkBy = By.xpath("//a[contains(@class,'upload-link') and @data-line='" + actualDataLine + "']");
+        List<WebElement> uploadLinks = driver.findElements(uploadLinkBy);
+        if (uploadLinks.isEmpty()) {
+            System.out.println("  [Image] Upload link not found — skipping");
+            return;
+        }
+
+        WebElement uploadLink = uploadLinks.get(0);
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", uploadLink);
+        sleep(150);
+
+        try {
+            byte[] imgBytes = java.nio.file.Files.readAllBytes(imgFile.toPath());
+            String base64Image = java.util.Base64.getEncoder().encodeToString(imgBytes);
+            String mimeType = "image/png";
+            String lname = imgFile.getName().toLowerCase();
+            if      (lname.endsWith(".jpg") || lname.endsWith(".jpeg")) mimeType = "image/jpeg";
+            else if (lname.endsWith(".gif"))  mimeType = "image/gif";
+            else if (lname.endsWith(".webp")) mimeType = "image/webp";
+
+            String jsIntercept =
+                "(function(){var o=HTMLInputElement.prototype.click;" +
+                "HTMLInputElement.prototype.click=function(){" +
+                "if(this.type==='file'){" +
+                "var b=atob('" + base64Image + "'),m='" + mimeType + "',n='" + imgFile.getName() + "';" +
+                "var a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);" +
+                "var f=new File([new Blob([a],{type:m})],n,{type:m,lastModified:Date.now()});" +
+                "var dt=new DataTransfer();dt.items.add(f);this.files=dt.files;" +
+                "var s=this;setTimeout(function(){" +
+                "s.dispatchEvent(new Event('change',{bubbles:true}));" +
+                "s.dispatchEvent(new Event('input', {bubbles:true}));},100);" +
+                "HTMLInputElement.prototype.click=o;return;}" +
+                "return o.apply(this,arguments);};}());";
+
+            js.executeScript(jsIntercept);
+            js.executeScript("arguments[0].click();", uploadLink);
+            sleep(600);
+            dismissAlertIfPresent();
+            System.out.println("  [Image] Upload complete for data-line=" + actualDataLine);
+
+        } catch (Exception e) {
+            System.out.println("  [Image] JS intercept failed: " + e.getMessage() + " — Robot fallback");
+            try {
+                uploadLink.click();
+                sleep(1200);
+                Robot robot = new Robot();
+                StringSelection sel = new StringSelection(imgFile.getAbsolutePath());
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
+                sleep(200);
+                robot.keyPress(KeyEvent.VK_CONTROL); robot.keyPress(KeyEvent.VK_A);
+                robot.keyRelease(KeyEvent.VK_A);     robot.keyRelease(KeyEvent.VK_CONTROL);
+                sleep(80);
+                robot.keyPress(KeyEvent.VK_CONTROL); robot.keyPress(KeyEvent.VK_V);
+                robot.keyRelease(KeyEvent.VK_V);     robot.keyRelease(KeyEvent.VK_CONTROL);
+                sleep(150);
+                robot.keyPress(KeyEvent.VK_ENTER);
+                robot.keyRelease(KeyEvent.VK_ENTER);
+                sleep(1500);
+                dismissAlertIfPresent();
+            } catch (Exception robotEx) {
+                System.out.println("  [Image] Robot fallback failed: " + robotEx.getMessage());
+            }
+        }
+
+        // Always switch back to main window after upload
+        ensureMainWindow();
+        System.out.println("  [Image] Window verified after upload.");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // TARGET PRICE POPUP
+    // ─────────────────────────────────────────────────────────────
+
+    public void handleTargetPricePopup(String rawPrice) {
+        ensureMainWindow();
+
+        String price = rawPrice.replaceAll("[^0-9.]", "").trim();
+        if (price.isEmpty()) price = "0";
+        System.out.println("  Opening Target Price popup, value: " + price);
+
+        By modalBy = By.id("customTargetPopupModal");
+
+        // Anchor price span by data-line — no row index
+        By priceSpanBy = (currentDataLine != null)
+            ? By.xpath("//table//tbody//tr//span[contains(@class,'price-input') and @data-line='" + currentDataLine + "']")
+            : By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]");
+
+        waitForToastrToDisappear();
+        dismissAlertIfPresent();
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            try {
+                ensureMainWindow();
+                WebElement freshSpan = wait.until(ExpectedConditions.presenceOfElementLocated(priceSpanBy));
+                js.executeScript("arguments[0].scrollIntoView({block:'center'});", freshSpan);
+                sleep(100);
+                js.executeScript(
+                    "arguments[0].dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,view:window}));",
+                    freshSpan);
+                System.out.println("  JS dblclick attempt " + attempt);
+                sleep(500);
+                if (isModalVisible(modalBy)) break;
+
+                if (attempt <= 2) {
+                    try {
+                        new Actions(driver).moveToElement(driver.findElement(priceSpanBy)).doubleClick().perform();
+                        sleep(500);
+                        if (isModalVisible(modalBy)) break;
+                    } catch (StaleElementReferenceException ignored) {}
+                }
+                System.out.println("  Modal not open after attempt " + attempt + ", retrying...");
+                sleep(300);
+            } catch (StaleElementReferenceException e) {
+                System.out.println("  [StaleRetry] priceSpan stale on attempt " + attempt);
+                sleep(300);
+            }
+        }
+
+        if (!isModalVisible(modalBy))
+            throw new RuntimeException("Target price modal did not open.");
+        System.out.println("  Modal is open");
+
+        new WebDriverWait(driver, Duration.ofSeconds(10))
+            .until(d -> !d.findElement(modalBy).findElements(By.xpath(".//input[not(@type='hidden')]")).isEmpty());
+
+        int inputCount = driver.findElement(modalBy).findElements(By.xpath(".//input[not(@type='hidden')]")).size();
+        System.out.println("  Modal inputs: " + inputCount);
+
+        clearAndType(driver.findElement(modalBy).findElements(By.xpath(".//input[not(@type='hidden')]")).get(0), price);
+        System.out.println("  Target Price Set <- " + price);
+        sleep(100);
+        fillModalField(driver.findElement(modalBy), "Margin Factor",    "10");  sleep(80);
+        fillModalField(driver.findElement(modalBy), "Shipping Factor",  "5");   sleep(80);
+        fillModalField(driver.findElement(modalBy), "Tariff Factor",    "12");  sleep(80);
+        fillModalField(driver.findElement(modalBy), "CPS Handling Cost","720"); sleep(100);
+
+        WebElement saveBtn = findSaveButton(driver.findElement(modalBy));
+        if (saveBtn == null) throw new RuntimeException("No Save button in target price modal.");
+
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", saveBtn);
+        sleep(80);
+        System.out.println("  Clicking Save: '" + saveBtn.getText() + "'");
+        js.executeScript("arguments[0].click();", saveBtn);
+
+        boolean closed = waitForModalClose(modalBy, 15_000);
+        if (!closed) {
+            System.out.println("  Modal still open after 15s — force closing");
+            forceCloseModal("customTargetPopupModal");
+            sleep(200);
+            dismissAlertIfPresent();
+        } else {
+            System.out.println("  Modal closed normally");
+        }
+
+        try { wait.until(d -> js.executeScript("return document.readyState").equals("complete")); }
+        catch (Exception ignored) {}
+
+        waitForToastrToDisappear();
+        dismissAlertIfPresent();
+        ensureMainWindow();
+        sleep(200);
+        System.out.println("  Target Price popup done");
+    }
+
+    private boolean isModalVisible(By modalBy) {
+        try {
+            List<WebElement> m = driver.findElements(modalBy);
+            return !m.isEmpty() && m.get(0).isDisplayed();
+        } catch (Exception e) { return false; }
+    }
+
+    private boolean waitForModalClose(By modalBy, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            dismissAlertIfPresent();
+            try {
+                List<WebElement> m = driver.findElements(modalBy);
+                if (m.isEmpty() || !m.get(0).isDisplayed()) return true;
+            } catch (Exception e) { return true; }
+            sleep(250);
+        }
+        return false;
+    }
+
+    private void forceCloseModal(String modalId) {
+        try {
+            js.executeScript(
+                "var m=document.getElementById('" + modalId + "');" +
+                "if(m){m.style.display='none';m.classList.remove('show');}" +
+                "document.body.classList.remove('modal-open');" +
+                "document.body.style.overflow='';" +
+                "document.body.style.paddingRight='';" +
+                "var bd=document.querySelectorAll('.modal-backdrop');" +
+                "for(var i=0;i<bd.length;i++){bd[i].parentNode.removeChild(bd[i]);}");
+        } catch (Exception e) {
+            System.out.println("  [WARN] forceCloseModal failed: " + e.getMessage());
+        }
+    }
+
+    private WebElement findSaveButton(WebElement modal) {
+        List<WebElement> onclickSave = modal.findElements(By.xpath(
+            ".//button[contains(@onclick,'save') or contains(@onclick,'Save') or contains(@onclick,'submit')]"));
+        if (!onclickSave.isEmpty()) return onclickSave.get(0);
+
+        List<WebElement> classSave = modal.findElements(By.xpath(
+            ".//button[contains(@class,'save') or contains(@class,'btn-primary') or contains(@class,'customtarget-save')]"));
+        if (!classSave.isEmpty()) return classSave.get(0);
+
+        List<WebElement> allBtns = modal.findElements(By.tagName("button"));
+        for (WebElement btn : allBtns) {
+            String txt = btn.getText().trim().toLowerCase();
+            String cls = (btn.getAttribute("class") != null ? btn.getAttribute("class").toLowerCase() : "");
+            boolean isClose = cls.contains("close") || txt.equals("x") || txt.equals("cancel") || txt.equals("close");
+            if (!isClose && !txt.isEmpty()) return btn;
+        }
+        if (!allBtns.isEmpty()) return allBtns.get(allBtns.size() - 1);
+        return null;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // SEND EMAIL
+    // ─────────────────────────────────────────────────────────────
+
+    public void clickSendEmail() {
+        ensureMainWindow();
+        System.out.println("  Clicking Send Email button...");
+        WebElement btn = wait.until(ExpectedConditions.elementToBeClickable(sendEmailBtn));
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", btn);
+        js.executeScript("arguments[0].click();", btn);
+        sleep(800);
+        dismissAlertIfPresent();
+        System.out.println("  Send Email clicked — waiting for version popup...");
+        try {
+            wait.until(ExpectedConditions.visibilityOfElementLocated(
+                By.xpath("//button[contains(@onclick,'createVersion')]")));
+            System.out.println("  Version popup visible");
+        } catch (Exception e) {
+            System.out.println("  [WARN] Version popup not detected");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // CREATE VERSION POPUP
+    // ─────────────────────────────────────────────────────────────
+
+    public void handleCreateVersionPopup() {
+        ensureMainWindow();
+        System.out.println("  Handling Create Version popup...");
+        By createVersionBtnBy = By.xpath("//button[contains(@onclick,'createVersion')]");
+        try {
+            WebElement createBtn = wait.until(ExpectedConditions.elementToBeClickable(createVersionBtnBy));
+            js.executeScript("arguments[0].scrollIntoView({block:'center'});", createBtn);
+            sleep(150);
+            js.executeScript("arguments[0].click();", createBtn);
+            System.out.println("  'Create Version' clicked");
+        } catch (Exception e) {
+            System.out.println("  [WARN] Create Version button not found: " + e.getMessage());
+            js.executeScript("if(typeof createVersion==='function') createVersion();");
+        }
+        sleep(800);
+        dismissAlertIfPresent();
+        try {
+            wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("notesText")));
+            System.out.println("  Notes popup appeared");
+        } catch (Exception e) {
+            System.out.println("  [WARN] Notes popup not immediately visible");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // NOTES POPUP
+    // ─────────────────────────────────────────────────────────────
+
+    public void handleNotesPopup(String noteText) {
+        ensureMainWindow();
+        System.out.println("  Handling Notes popup: '" + noteText + "'");
+        WebElement notesTextarea = wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("notesText")));
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", notesTextarea);
+        sleep(150);
+        notesTextarea.click();
+        notesTextarea.clear();
+        js.executeScript("arguments[0].value='';arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", notesTextarea);
+        notesTextarea.sendKeys(noteText);
+        fireEvents(notesTextarea);
+        System.out.println("  Note entered: '" + noteText + "'");
+        sleep(150);
+
+        WebElement saveBtn = wait.until(ExpectedConditions.elementToBeClickable(By.id("saveNotes")));
+        js.executeScript("arguments[0].click();", saveBtn);
+        System.out.println("  Notes Save clicked");
+        sleep(800);
+        dismissAlertIfPresent();
+        try {
+            wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("bccField")));
+            System.out.println("  Compose mail popup appeared");
+        } catch (Exception e) {
+            System.out.println("  [WARN] Compose popup not immediately visible");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // SELECT VENDORS
+    // ─────────────────────────────────────────────────────────────
+
+    public void selectVendors(String[] vendors) {
+        ensureMainWindow();
+        System.out.println("  Opening vendor popup...");
+        try {
+            WebElement bccField = wait.until(ExpectedConditions.elementToBeClickable(By.id("bccField")));
+            js.executeScript("arguments[0].scrollIntoView({block:'center'});", bccField);
+            sleep(150);
+            js.executeScript("arguments[0].click();", bccField);
+            System.out.println("  bccField clicked");
+        } catch (Exception e) {
+            System.out.println("  [WARN] bccField click failed: " + e.getMessage());
+            js.executeScript("if(typeof openVendorPopup==='function') openVendorPopup();");
+        }
+        sleep(800);
+
+        try {
+            wait.until(d -> !d.findElements(By.xpath("//input[@type='checkbox']")).isEmpty());
+        } catch (Exception e) {
+            System.out.println("  [WARN] No checkboxes found");
+        }
+
+        for (String vendorName : vendors) {
+            String name = vendorName.trim();
+            System.out.println("  Selecting vendor: '" + name + "'");
+            try {
+                Boolean found = (Boolean) js.executeScript(
+                    "var name=arguments[0];" +
+                    "var cbs=document.querySelectorAll('input[type=\"checkbox\"]');" +
+                    "for(var i=0;i<cbs.length;i++){" +
+                    "  var cb=cbs[i],txt='';" +
+                    "  if(cb.parentElement) txt+=cb.parentElement.innerText||'';" +
+                    "  if(cb.nextSibling)   txt+=cb.nextSibling.textContent||'';" +
+                    "  if(cb.nextElementSibling) txt+=cb.nextElementSibling.innerText||'';" +
+                    "  var lbl=document.querySelector('label[for=\"'+cb.id+'\"]');" +
+                    "  if(lbl) txt+=lbl.innerText||'';" +
+                    "  if(txt.replace(/\\s+/g,' ').trim().indexOf(name)>=0){" +
+                    "    cb.scrollIntoView({block:'center'});" +
+                    "    if(!cb.checked){cb.click();cb.dispatchEvent(new Event('change',{bubbles:true}));}" +
+                    "    return true;}}" +
+                    "return false;", name);
+                System.out.println(Boolean.TRUE.equals(found)
+                    ? "  ✓ Selected: '" + name + "'"
+                    : "  [WARN] Not found: '" + name + "'");
+            } catch (Exception e) {
+                System.out.println("  [WARN] JS scan failed for '" + name + "': " + e.getMessage());
+            }
+            sleep(150);
+        }
+        System.out.println("  Vendor selection complete");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // VENDOR SAVE BUTTON
+    // ─────────────────────────────────────────────────────────────
+
+    public void clickVendorSaveButton() {
+        ensureMainWindow();
+        System.out.println("  Clicking vendor Save button...");
+        By vendorSaveBtnBy = By.xpath("//button[contains(@onclick,'saveSelectedVendors')]");
+        try {
+            WebElement saveBtn = wait.until(ExpectedConditions.elementToBeClickable(vendorSaveBtnBy));
+            js.executeScript("arguments[0].scrollIntoView({block:'center'});", saveBtn);
+            sleep(80);
+            js.executeScript("arguments[0].click();", saveBtn);
+            System.out.println("  ✓ Vendor Save clicked");
+        } catch (Exception e) {
+            System.out.println("  [WARN] Button not found: " + e.getMessage());
+            js.executeScript("if(typeof saveSelectedVendors==='function') saveSelectedVendors();");
+        }
+        sleep(800);
+        dismissAlertIfPresent();
+        waitForDom();
+        System.out.println("  Vendor Save done");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // SEND EMAIL IN COMPOSE
+    // ─────────────────────────────────────────────────────────────
+
+    public void clickSendEmailInCompose() {
+        ensureMainWindow();
+        System.out.println("  Clicking Send Email in compose popup...");
+        By sendBtnBy = By.xpath("//button[contains(@onclick,'sendMail')]");
+        try {
+            WebElement sendBtn = wait.until(ExpectedConditions.elementToBeClickable(sendBtnBy));
+            js.executeScript("arguments[0].scrollIntoView({block:'center'});", sendBtn);
+            sleep(150);
+            js.executeScript("arguments[0].click();", sendBtn);
+            System.out.println("  Send Email (compose) clicked");
+        } catch (Exception e) {
+            System.out.println("  [WARN] Send button not found: " + e.getMessage());
+            js.executeScript("if(typeof sendMail==='function') sendMail();");
+        }
+        sleep(1200);
+        dismissAlertIfPresent();
+        waitForDom();
+        System.out.println("  Email send action complete");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // FILL ROW DATA
+    // ─────────────────────────────────────────────────────────────
+
+    public void fillRowData(String[] rowData, int excelRowIndex) {
+        ensureMainWindow();
+
+        int tdCount = driver.findElements(By.xpath(rowXPath() + "//td")).size();
+        System.out.println("  TD count=" + tdCount + " | tdMap=" + tdMap);
+
+        if (tdMap.containsKey("partNumber")) {
+            fillByMap("partNumber",   rowData[0],  "Part Number");
+            fillByMap("partName",     rowData[1],  "Part Name");
+            fillByMap("resin",        rowData[2],  "Resin");
+            fillByMap("cav",          rowData[3],  "Cav");
+            fillByMap("injSystem",    rowData[4],  "Injection System");
+            fillByMap("gate",         rowData[5],  "Gate");
+            fillByMap("eau",          rowData[6],  "EAU");
+            fillByMap("steel",        rowData[7],  "Steel");
+            fillByMap("ejection",     rowData[8],  "Ejection");
+            fillByMap("moldFeatures", rowData[9],  "Mold Features");
+            fillByMap("notes",        rowData[12], "Notes");
+        } else {
+            int o = (tdCount >= 33) ? 1 : 0;
+            enterText(5  + o, rowData[0]);
+            enterText(7  + o, rowData[1]);
+            enterText(6  + o, rowData[2]);
+            enterText(9  + o, rowData[3]);
+            enterText(10 + o, rowData[4]);
+            enterText(11 + o, rowData[5]);
+            enterText(12 + o, rowData[6]);
+            enterText(13 + o, rowData[7]);
+            enterText(14 + o, rowData[8]);
+            enterText(15 + o, rowData[9]);
+            enterText(19 + o, rowData[12]);
+        }
+
+        uploadImageForRow(imageMap.get(excelRowIndex));
+        handleTargetPricePopup(rowData[10]);
+    }
+
+    public void fillRowData(String[] rowData) {
+        fillRowData(rowData, -1);
+    }
+
+    private void fillByMap(String colKey, String value, String colLabel) {
+        if (!tdMap.containsKey(colKey)) {
+            System.out.println("  WARNING: No TD found for: " + colLabel);
+            return;
+        }
+        System.out.println("  Filling [" + colLabel + "] at td[" + tdMap.get(colKey) + "]");
+        enterText(tdMap.get(colKey), value);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // CLEAR AND TYPE / MODAL HELPERS
+    // ─────────────────────────────────────────────────────────────
+
+    private void clearAndType(WebElement field, String value) {
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", field);
+        field.click();
+        field.sendKeys(Keys.chord(Keys.CONTROL, "a"));
+        field.sendKeys(Keys.DELETE);
+        field.clear();
+        js.executeScript("arguments[0].value='';arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", field);
+        field.sendKeys(value);
+        fireEvents(field);
+    }
+
+    private void fillModalField(WebElement modal, String labelText, String value) {
+        try {
+            WebElement field = modal.findElement(By.xpath(
+                ".//label[contains(text(),'" + labelText + "')]/following::input[not(@type='hidden')][1]"));
+            clearAndType(field, value);
+            System.out.println("  " + labelText + " ← " + value);
+        } catch (Exception e) {
+            System.out.println("  WARNING: Could not fill [" + labelText + "]: " + e.getMessage());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // READ EXCEL
+    // ─────────────────────────────────────────────────────────────
+
+    public String[][] readExcelData(String filePath) throws Exception {
+        File file = new File(filePath);
+        System.out.println("Reading Excel: " + file.getAbsolutePath());
+
+        FileInputStream fis = new FileInputStream(file);
+        XSSFWorkbook workbook = new XSSFWorkbook(fis);
+        XSSFSheet sheet = workbook.getSheetAt(0);
+        DataFormatter formatter = new DataFormatter();
+
+        int rowCount = sheet.getPhysicalNumberOfRows();
+        int dataCols = 13;
+        String[][] data = new String[rowCount - 1][dataCols];
+
+        for (int i = 1; i < rowCount; i++) {
+            Row row = sheet.getRow(i);
+            for (int j = 0; j < dataCols; j++) {
+                int excelCol = (j < 2) ? (j + 1) : (j + 2);
+                Cell cell = (row == null) ? null : row.getCell(excelCol);
+                data[i - 1][j] = (cell == null) ? "" : formatter.formatCellValue(cell);
+            }
+        }
+
+        imageMap.clear();
+        String tempDir = System.getProperty("java.io.tmpdir") + File.separator + "rfq_images";
+        new File(tempDir).mkdirs();
+
+        try {
+            XSSFDrawing drawing = sheet.getDrawingPatriarch();
+            if (drawing != null) {
+                for (XSSFShape shape : drawing.getShapes()) {
+                    if (shape instanceof XSSFPicture) {
+                        XSSFPicture pic = (XSSFPicture) shape;
+                        XSSFClientAnchor anchor = (XSSFClientAnchor) pic.getAnchor();
+                        int excelRowIdx = anchor.getRow1();
+                        XSSFPictureData picData = pic.getPictureData();
+                        byte[] imgBytes = picData.getData();
+                        String imgPath = tempDir + File.separator + "part_image_row" + excelRowIdx
+                            + "." + picData.suggestFileExtension();
+                        try (FileOutputStream fos = new FileOutputStream(imgPath)) {
+                            fos.write(imgBytes);
+                        }
+                        imageMap.put(excelRowIdx, imgPath);
+                        System.out.println("  Extracted image: excelRow=" + excelRowIdx + " → " + imgPath
+                            + " (" + imgBytes.length + " bytes)");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("  [WARN] Image extraction failed: " + e.getMessage());
+        }
+
+        System.out.println("  imageMap keys: " + imageMap.keySet());
+        workbook.close();
+        fis.close();
+        System.out.println("Total rows read: " + (rowCount - 1));
+        return data;
+    }
+
+    public Map<Integer, String> getImageMap() {
+        return Collections.unmodifiableMap(imageMap);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // VERIFY
+    // ─────────────────────────────────────────────────────────────
+
+    public boolean isEmailSentSuccessfully() {
+        ensureMainWindow();
+        try {
+            wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath(
+                "//*[contains(text(),'Email sent') or contains(text(),'Success') or " +
+                "contains(text(),'sent successfully') or contains(text(),'Mail sent')]")));
+            return true;
+        } catch (Exception e) {
+            return driver.getPageSource().contains("sent") || driver.getPageSource().contains("Success");
+        }
+    }
+}

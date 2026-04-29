@@ -1,0 +1,177 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<modelVersion>4.0.0</modelVersion>
+<groupId>com.cps.automation</groupId>
+<artifactId>cps-automation</artifactId>
+<version>0.0.1-SNAPSHOT</version>
+<name>cps-automation</name>
+<url>http://www.example.com</url>
+<properties>
+<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+<maven.compiler.release>17</maven.compiler.release>
+<!--  Jenkins passes -DsuiteFile=testng-smoke.xml to override  -->
+<suiteFile>testng.xml</suiteFile>
+<!--  Jenkins passes -Dbrowser=chrome  -->
+<browser>chrome</browser>
+<!--  Jenkins passes -DbaseUrl=http://... to override app URL  -->
+<baseUrl>http://162.244.66.135:8989/rev-aux/buyerlogin</baseUrl>
+</properties>
+<dependencyManagement>
+<dependencies>
+<dependency>
+<groupId>org.junit</groupId>
+<artifactId>junit-bom</artifactId>
+<version>5.11.0</version>
+<type>pom</type>
+<scope>import</scope>
+</dependency>
+</dependencies>
+</dependencyManagement>
+<dependencies>
+<!--  ── Existing dependencies (unchanged) ───────────────────  -->
+<dependency>
+<groupId>org.junit.jupiter</groupId>
+<artifactId>junit-jupiter-api</artifactId>
+<scope>test</scope>
+</dependency>
+<dependency>
+<groupId>org.junit.jupiter</groupId>
+<artifactId>junit-jupiter-params</artifactId>
+<scope>test</scope>
+</dependency>
+<dependency>
+<groupId>org.seleniumhq.selenium</groupId>
+<artifactId>selenium-java</artifactId>
+<version>4.18.1</version>
+</dependency>
+<dependency>
+<groupId>org.testng</groupId>
+<artifactId>testng</artifactId>
+<version>7.9.0</version>
+<scope>test</scope>
+</dependency>
+<dependency>
+<groupId>io.cucumber</groupId>
+<artifactId>cucumber-java</artifactId>
+<version>7.15.0</version>
+</dependency>
+<dependency>
+<groupId>io.cucumber</groupId>
+<artifactId>cucumber-testng</artifactId>
+<version>7.15.0</version>
+</dependency>
+<dependency>
+<groupId>io.github.bonigarcia</groupId>
+<artifactId>webdrivermanager</artifactId>
+<version>5.7.0</version>
+</dependency>
+<dependency>
+<groupId>commons-io</groupId>
+<artifactId>commons-io</artifactId>
+<version>2.15.1</version>
+</dependency>
+<dependency>
+<groupId>net.masterthought</groupId>
+<artifactId>cucumber-reporting</artifactId>
+<version>5.7.8</version>
+</dependency>
+<dependency>
+<groupId>org.apache.poi</groupId>
+<artifactId>poi-ooxml</artifactId>
+<version>5.2.3</version>
+</dependency>
+<!--  ── NEW: Allure for Jenkins HTML reports ────────────────  -->
+<dependency>
+<groupId>io.qameta.allure</groupId>
+<artifactId>allure-testng</artifactId>
+<version>2.25.0</version>
+</dependency>
+<dependency>
+<groupId>io.qameta.allure</groupId>
+<artifactId>allure-cucumber7-jvm</artifactId>
+<version>2.25.0</version>
+</dependency>
+<!--  Required by allure-testng for bytecode weaving  -->
+<dependency>
+<groupId>org.aspectj</groupId>
+<artifactId>aspectjweaver</artifactId>
+<version>1.9.21</version>
+</dependency>
+</dependencies>
+<build>
+<pluginManagement>
+<plugins>
+<plugin>
+<artifactId>maven-clean-plugin</artifactId>
+<version>3.4.0</version>
+</plugin>
+<plugin>
+<artifactId>maven-resources-plugin</artifactId>
+<version>3.3.1</version>
+</plugin>
+<plugin>
+<artifactId>maven-compiler-plugin</artifactId>
+<version>3.13.0</version>
+</plugin>
+<plugin>
+<artifactId>maven-jar-plugin</artifactId>
+<version>3.4.2</version>
+</plugin>
+<plugin>
+<artifactId>maven-install-plugin</artifactId>
+<version>3.1.2</version>
+</plugin>
+<plugin>
+<artifactId>maven-deploy-plugin</artifactId>
+<version>3.1.2</version>
+</plugin>
+<plugin>
+<artifactId>maven-site-plugin</artifactId>
+<version>3.12.1</version>
+</plugin>
+<plugin>
+<artifactId>maven-project-info-reports-plugin</artifactId>
+<version>3.6.1</version>
+</plugin>
+</plugins>
+</pluginManagement>
+<plugins>
+<!--  ── Maven Surefire: runs TestNG via testng.xml ────────  -->
+<!--  replaces the pluginManagement-only entry above         -->
+<plugin>
+<groupId>org.apache.maven.plugins</groupId>
+<artifactId>maven-surefire-plugin</artifactId>
+<version>3.3.0</version>
+<configuration>
+<!--  Jenkins overrides with -DsuiteFile=testng-smoke.xml  -->
+<suiteXmlFiles>
+<suiteXmlFile>${suiteFile}</suiteXmlFile>
+</suiteXmlFiles>
+<!-- 
+						IMPORTANT: testFailureIgnore=true means Maven does NOT
+						fail the build when tests fail. Jenkins Quality Gate
+						stage reads testng-results.xml and fails the build
+						itself — giving us a proper Allure report first.
+					 -->
+<testFailureIgnore>true</testFailureIgnore>
+<systemPropertyVariables>
+<!--  makes -Dbrowser and -DbaseUrl available inside Java  -->
+<browser>${browser}</browser>
+<baseUrl>${baseUrl}</baseUrl>
+</systemPropertyVariables>
+<!--  aspectjweaver needed by Allure to intercept TestNG  -->
+<argLine> -javaagent:"${settings.localRepository}/org/aspectj/aspectjweaver/1.9.21/aspectjweaver-1.9.21.jar" </argLine>
+</configuration>
+</plugin>
+<!--  ── Allure Maven plugin: generates HTML report ─────────  -->
+<plugin>
+<groupId>io.qameta.allure</groupId>
+<artifactId>allure-maven</artifactId>
+<version>2.12.0</version>
+<configuration>
+<reportVersion>2.25.0</reportVersion>
+<resultsDirectory>${project.build.directory}/allure-results</resultsDirectory>
+</configuration>
+</plugin>
+</plugins>
+</build>
+</project>
