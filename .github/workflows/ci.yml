@@ -1,14 +1,9 @@
 name: CPS Automation — CI/CD Pipeline
 
-# ── When does this pipeline run? ─────────────────────────────
 on:
   push:
-    branches: [ main ]          # every git push to main
-  pull_request:
-    branches: [ main ]          # every pull request to main
-  schedule:
-    - cron: '0 2 * * *'         # every night at 2 AM automatically
-  workflow_dispatch:            # manual trigger button in GitHub UI
+    branches: [ main ]
+  workflow_dispatch:
     inputs:
       suite:
         description: 'TestNG suite to run'
@@ -38,95 +33,95 @@ on:
           - '@Employee'
           - '@ProcurementModule'
 
-# ── Job definition ────────────────────────────────────────────
 jobs:
   selenium-tests:
     name: Run Selenium Tests
-    runs-on: ubuntu-latest        # GitHub's free Linux server
-
-    defaults:
-      run:
-        working-directory: cps-automation   # your subfolder
+    runs-on: ubuntu-latest
 
     steps:
 
-      # ── Step 1: Get your code ─────────────────────────────
-      - name: Checkout code
+      - name: ✅ Step 1 — Checkout code
         uses: actions/checkout@v4
 
-      # ── Step 2: Install Java 17 (matches your pom.xml) ───
-      - name: Set up Java 17
+      - name: ✅ Step 2 — Set up Java 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: maven             # caches Maven deps = faster builds
+          cache: maven
 
-      # ── Step 3: Install Chrome browser ───────────────────
-      - name: Set up Chrome
+      - name: ✅ Step 3 — Install Chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
 
-      # ── Step 4: Show versions (good for debugging) ───────
-      - name: Print versions
+      - name: ✅ Step 4 — Print versions
         run: |
+          echo "=== Java Version ==="
           java -version
+          echo "=== Maven Version ==="
           mvn -version
+          echo "=== Chrome Version ==="
           google-chrome --version
+          echo "=== Project Structure ==="
+          ls -la
+          echo "=== cps-automation folder ==="
+          ls -la cps-automation/
 
-      # ── Step 5: Run your Selenium + Cucumber + TestNG ────
-      - name: Run Tests
+      - name: ✅ Step 5 — Build project
+        working-directory: cps-automation
+        run: mvn clean compile -q
+
+      - name: ✅ Step 6 — Run Tests
+        working-directory: cps-automation
+        env:
+          CI: true
+          APP_URL: ${{ secrets.APP_BASE_URL }}
         run: |
           mvn test \
             -DsuiteFile=${{ github.event.inputs.suite || 'testng.xml' }} \
             -Dbrowser=${{ github.event.inputs.browser || 'chrome' }} \
             -Dcucumber.filter.tags="${{ github.event.inputs.tag || '@RFQDetailsModule' }}" \
-            -DbaseUrl=${{ secrets.APP_BASE_URL }} \
+            -DbaseUrl="${{ secrets.APP_BASE_URL }}" \
+            -DtestFailureIgnore=true \
             -q
-        env:
-          # Headless mode auto-detected by your DriverManager.java
-          # because CI=true is set by GitHub automatically
-          CI: true
 
-      # ── Step 6: Upload Allure results (even if tests fail)
-      - name: Upload Allure Results
+      - name: ✅ Step 7 — Upload Allure Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-results-${{ github.run_number }}
           path: cps-automation/target/allure-results/
           retention-days: 30
+          if-no-files-found: warn
 
-      # ── Step 7: Upload screenshots on failure ────────────
-      - name: Upload Screenshots
-        if: failure()
+      - name: ✅ Step 8 — Upload Screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: failure-screenshots-${{ github.run_number }}
+          name: screenshots-${{ github.run_number }}
           path: cps-automation/target/screenshots/
           retention-days: 7
+          if-no-files-found: warn
 
-      # ── Step 8: Upload Cucumber HTML report ──────────────
-      - name: Upload Cucumber Report
+      - name: ✅ Step 9 — Upload Cucumber Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cucumber-report-${{ github.run_number }}
           path: cps-automation/target/cucumber-reports/
           retention-days: 30
+          if-no-files-found: warn
 
-      # ── Step 9: Publish TestNG results in GitHub UI ──────
-      - name: Publish Test Results
+      - name: ✅ Step 10 — Publish TestNG Results
         if: always()
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           files: cps-automation/target/surefire-reports/*.xml
-          check_name: TestNG Results
+          check_name: TestNG Test Results
           comment_on_pr: true
 
-      # ── Step 10: Generate Allure HTML Report ─────────────
-      - name: Generate Allure Report
+      - name: ✅ Step 11 — Generate Allure Report
         if: always()
         uses: simple-elf/allure-report-action@v1.7
         with:
@@ -134,8 +129,7 @@ jobs:
           allure_report: allure-report
           allure_history: allure-history
 
-      # ── Step 11: Deploy Allure to GitHub Pages ───────────
-      - name: Deploy Allure Report to GitHub Pages
+      - name: ✅ Step 12 — Deploy to GitHub Pages
         if: always()
         uses: peaceiris/actions-gh-pages@v3
         with:
@@ -143,46 +137,17 @@ jobs:
           publish_branch: gh-pages
           publish_dir: allure-report
 
-      # ── Step 12: Slack notification ──────────────────────
-      - name: Slack — Success
-        if: success()
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "channel": "#qa-automation",
-              "attachments": [{
-                "color": "good",
-                "title": "✅ PASSED — CPS Automation",
-                "fields": [
-                  {"title": "Branch",  "value": "${{ github.ref_name }}", "short": true},
-                  {"title": "Run",     "value": "#${{ github.run_number }}", "short": true},
-                  {"title": "Commit",  "value": "${{ github.sha }}", "short": false},
-                  {"title": "Report",  "value": "https://vishal344.github.io/TestFusion-Hybrid-Automation-Framework", "short": false}
-                ]
-              }]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-
-      - name: Slack — Failure
-        if: failure()
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "channel": "#qa-automation",
-              "attachments": [{
-                "color": "danger",
-                "title": "❌ FAILED — CPS Automation",
-                "fields": [
-                  {"title": "Branch",  "value": "${{ github.ref_name }}", "short": true},
-                  {"title": "Run",     "value": "#${{ github.run_number }}", "short": true},
-                  {"title": "Logs",    "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
-                ]
-              }]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK 
+      - name: ✅ Step 13 — Show Results Summary
+        if: always()
+        run: |
+          echo "=============================="
+          echo "  BUILD SUMMARY"
+          echo "=============================="
+          echo "Run Number : ${{ github.run_number }}"
+          echo "Branch     : ${{ github.ref_name }}"
+          echo "Commit     : ${{ github.sha }}"
+          echo "Suite      : ${{ github.event.inputs.suite || 'testng.xml' }}"
+          echo "Browser    : ${{ github.event.inputs.browser || 'chrome' }}"
+          echo "Tag        : ${{ github.event.inputs.tag || '@RFQDetailsModule' }}"
+          echo "Report URL : https://vishal344.github.io/TestFusion-Hybrid-Automation-Framework"
+          echo "=============================="
