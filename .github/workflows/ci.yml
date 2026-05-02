@@ -4,25 +4,6 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      suite:
-        description: 'TestNG suite'
-        required: true
-        default: 'testng.xml'
-        type: choice
-        options: [testng.xml, testng-smoke.xml]
-      browser:
-        description: 'Browser'
-        required: true
-        default: 'chrome'
-        type: choice
-        options: [chrome, firefox]
-      tag:
-        description: 'Cucumber tag'
-        required: true
-        default: '@RFQDetailsModule'
-        type: choice
-        options: ['@RFQDetailsModule','@Smoke','@Customer','@Employee','@ProcurementModule']
 
 jobs:
   selenium-tests:
@@ -31,68 +12,50 @@ jobs:
 
     steps:
 
-      # ── 1. Checkout ──────────────────────────────────────────────
-      - name: Checkout code
+      - name: Step 1 - Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Debug — show EXACT repo structure ─────────────────────
-      - name: Show repo structure
+      - name: Step 2 - Show structure
         run: |
-          echo "===== ROOT ====="
+          echo "=== ROOT FILES ==="
           ls -la
-          echo "===== cps-automation ====="
-          ls -la cps-automation/ || echo "NO cps-automation FOLDER"
-          echo "===== pom.xml check ====="
-          cat cps-automation/pom.xml | head -20 || echo "NO pom.xml"
-          echo "===== testng.xml check ====="
-          cat cps-automation/testng.xml || echo "NO testng.xml"
+          echo "=== cps-automation ==="
+          ls -la cps-automation/ || echo "MISSING cps-automation folder"
+          echo "=== pom.xml ==="
+          ls cps-automation/pom.xml || echo "MISSING pom.xml"
+          echo "=== testng.xml ==="
+          ls cps-automation/testng.xml || echo "MISSING testng.xml"
 
-      # ── 3. Java 17 ───────────────────────────────────────────────
-      - name: Set up Java 17
+      - name: Step 3 - Java 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: maven
 
-      # ── 4. Chrome ────────────────────────────────────────────────
-      - name: Install Chrome
+      - name: Step 4 - Install Chrome
         run: |
           sudo apt-get update -q
           sudo apt-get install -y google-chrome-stable
           google-chrome --version
 
-      # ── 5. Maven compile ─────────────────────────────────────────
-      - name: Build project
+      - name: Step 5 - Maven compile
         working-directory: cps-automation
         run: mvn clean compile -q
 
-      # ── 6. Run tests ─────────────────────────────────────────────
-      - name: Run Tests
+      - name: Step 6 - Run Tests
         working-directory: cps-automation
         env:
           CI: true
         run: |
           mvn test \
-            -DsuiteFile=${{ github.event.inputs.suite || 'testng.xml' }} \
-            -Dbrowser=${{ github.event.inputs.browser || 'chrome' }} \
-            -Dcucumber.filter.tags="${{ github.event.inputs.tag || '@RFQDetailsModule' }}" \
+            -DsuiteFile=testng.xml \
+            -Dbrowser=chrome \
+            -Dcucumber.filter.tags="@RFQDetailsModule" \
             -DbaseUrl="${{ secrets.APP_BASE_URL }}" \
             -q || true
 
-      # ── 7. Show test results ──────────────────────────────────────
-      - name: Show test results
-        if: always()
-        run: |
-          echo "===== SUREFIRE REPORTS ====="
-          find cps-automation/target/surefire-reports -name "*.xml" 2>/dev/null | head -5 || echo "No surefire reports"
-          echo "===== ALLURE RESULTS ====="
-          ls cps-automation/target/allure-results/ 2>/dev/null || echo "No allure results"
-          echo "===== SCREENSHOTS ====="
-          ls cps-automation/target/screenshots/ 2>/dev/null || echo "No screenshots"
-
-      # ── 8. Upload all artifacts ───────────────────────────────────
-      - name: Upload Test Artifacts
+      - name: Step 7 - Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -104,29 +67,3 @@ jobs:
             cps-automation/target/surefire-reports/
           retention-days: 30
           if-no-files-found: warn
-
-      # ── 9. Publish TestNG XML results ─────────────────────────────
-      - name: Publish Test Results
-        if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        with:
-          files: cps-automation/target/surefire-reports/*.xml
-          check_name: TestNG Results
-          comment_on_pr: true
-
-      # ── 10. Generate + Deploy Allure report ───────────────────────
-      - name: Generate Allure Report
-        if: always()
-        uses: simple-elf/allure-report-action@v1.7
-        with:
-          allure_results: cps-automation/target/allure-results
-          allure_report: allure-report
-          allure_history: allure-history
-
-      - name: Deploy to GitHub Pages
-        if: always()
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: allure-report
