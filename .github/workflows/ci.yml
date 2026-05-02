@@ -29,6 +29,10 @@ on:
           - '@Employee'
           - '@ProcurementModule'
 
+defaults:
+  run:
+    shell: cmd
+
 jobs:
   selenium-tests:
     name: Run Selenium Tests
@@ -40,9 +44,9 @@ jobs:
 
       - name: Show structure
         run: |
-          echo "=== ROOT ==="
+          echo === ROOT ===
           dir
-          echo "=== cps-automation ==="
+          echo === cps-automation ===
           dir cps-automation
 
       - name: Set up Java 17
@@ -107,9 +111,9 @@ jobs:
       - name: Build Summary
         if: always()
         run: |
-          echo "================================"
-          echo "  RUN #${{ github.run_number }}"
-          echo "  Branch : ${{ github.ref_name }}"
-          echo "  Suite  : ${{ github.event.inputs.suite || 'testng.xml' }}"
-          echo "  Report : https://vishal344.github.io/TestFusion-Hybrid-Automation-Framework"
-          echo "================================"
+          echo ================================
+          echo   RUN #${{ github.run_number }}
+          echo   Branch : ${{ github.ref_name }}
+          echo   Suite  : ${{ github.event.inputs.suite || 'testng.xml' }}
+          echo   Report : https://vishal344.github.io/TestFusion-Hybrid-Automation-Framework
+          echo ================================
