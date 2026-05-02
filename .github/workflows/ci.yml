@@ -48,9 +48,6 @@ jobs:
           java -version
           echo === Checking Maven ===
           mvn -version
-          echo === Checking Structure ===
-          dir
-          dir cps-automation
 
       - name: Compile
         working-directory: cps-automation
@@ -86,14 +83,16 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: TestNG Results
-          path: cps-automation/target/surefire-reports/*.xml
+          path: |
+            cps-automation/target/surefire-reports/**/*.xml
+            cps-automation/target/cucumber-reports/**/*.xml
           reporter: java-junit
           fail-on-error: false
 
       - name: Generate Allure Report
         if: always()
-        run: |
-          mvn allure:report -f cps-automation/pom.xml
+        working-directory: cps-automation
+        run: mvn allure:report -q
 
       - name: Deploy Allure to GitHub Pages
         if: always()
