@@ -22,16 +22,19 @@ on:
         required: true
         default: '@RFQDetailsModule'
         type: choice
-        options: ['@RFQDetailsModule','@Smoke','@Customer','@Employee','@ProcurementModule']
+        options:
+          - '@RFQDetailsModule'
+          - '@Smoke'
+          - '@Customer'
+          - '@Employee'
+          - '@ProcurementModule'
 
 jobs:
   selenium-tests:
     name: Run Selenium Tests
-    # ↓ THIS is the only change — runs on YOUR machine now
     runs-on: self-hosted
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -61,7 +64,7 @@ jobs:
           mvn test ^
             -DsuiteFile=${{ github.event.inputs.suite || 'testng.xml' }} ^
             -Dbrowser=${{ github.event.inputs.browser || 'chrome' }} ^
-            -Dcucumber.filter.tags="${{ github.event.inputs.tag || '@RFQDetailsModule' }}" ^
+            "-Dcucumber.filter.tags=${{ github.event.inputs.tag || '@RFQDetailsModule' }}" ^
             -DbaseUrl="http://162.244.66.135:8989/rev-aux/buyerlogin" ^
             -DtestFailureIgnore=true
 
@@ -80,7 +83,7 @@ jobs:
 
       - name: Publish Test Results
         if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action/windows@v2
         with:
           files: cps-automation/target/surefire-reports/*.xml
           check_name: TestNG Results
