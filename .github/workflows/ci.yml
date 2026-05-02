@@ -44,9 +44,7 @@ jobs:
 
       - name: Verify Tools
         run: |
-          echo === Checking Java ===
           java -version
-          echo === Checking Maven ===
           mvn -version
 
       - name: Compile
@@ -71,10 +69,10 @@ jobs:
         with:
           name: test-artifacts-${{ github.run_number }}
           path: |
-            cps-automation/target/allure-results/
             cps-automation/target/cucumber-reports/
-            cps-automation/target/screenshots/
+            cps-automation/target/CucumberReports/
             cps-automation/target/surefire-reports/
+            cps-automation/target/screenshots/
           retention-days: 30
           if-no-files-found: warn
 
@@ -83,24 +81,23 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: TestNG Results
-          path: |
-            cps-automation/target/surefire-reports/**/*.xml
-            cps-automation/target/cucumber-reports/**/*.xml
+          path: cps-automation/target/surefire-reports/**/*.xml
           reporter: java-junit
           fail-on-error: false
 
-      - name: Generate Allure Report
+      - name: Prepare Cucumber Report for Pages
         if: always()
-        working-directory: cps-automation
-        run: mvn allure:report -q
+        run: |
+          mkdir report-site
+          copy cps-automation\target\cucumber-reports\cucumber.html report-site\index.html
 
-      - name: Deploy Allure to GitHub Pages
+      - name: Deploy Cucumber Report to GitHub Pages
         if: always()
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
-          publish_dir: cps-automation/target/site/allure-maven-plugin
+          publish_dir: report-site
           keep_files: false
 
       - name: Build Summary
