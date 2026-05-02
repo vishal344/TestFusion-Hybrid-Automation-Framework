@@ -63,6 +63,14 @@ jobs:
             -DbaseUrl="http://162.244.66.135:8989/rev-aux/buyerlogin" ^
             -DtestFailureIgnore=true
 
+      - name: Show Report Files
+        if: always()
+        run: |
+          echo === surefire-reports ===
+          dir cps-automation\target\surefire-reports
+          echo === cucumber-reports ===
+          dir cps-automation\target\cucumber-reports
+
       - name: Upload Test Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -81,14 +89,14 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: TestNG Results
-          path: cps-automation/target/surefire-reports/**/*.xml
+          path: cps-automation/target/surefire-reports/*.xml
           reporter: java-junit
           fail-on-error: false
 
       - name: Prepare Cucumber Report for Pages
         if: always()
         run: |
-          mkdir report-site
+          if not exist report-site mkdir report-site
           copy cps-automation\target\cucumber-reports\cucumber.html report-site\index.html
 
       - name: Deploy Cucumber Report to GitHub Pages
