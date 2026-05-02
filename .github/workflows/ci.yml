@@ -61,7 +61,8 @@ jobs:
             -Dbrowser=${{ github.event.inputs.browser || 'chrome' }} ^
             "-Dcucumber.filter.tags=${{ github.event.inputs.tag || '@RFQDetailsModule' }}" ^
             -DbaseUrl="http://162.244.66.135:8989/rev-aux/buyerlogin" ^
-            -DtestFailureIgnore=true
+            -DtestFailureIgnore=true ^
+            "-Dcucumber.plugin=html:target/cucumber-reports/cucumber.html,json:target/cucumber-reports/cucumber.json"
 
       - name: Show Report Files
         if: always()
@@ -78,7 +79,6 @@ jobs:
           name: test-artifacts-${{ github.run_number }}
           path: |
             cps-automation/target/cucumber-reports/
-            cps-automation/target/CucumberReports/
             cps-automation/target/surefire-reports/
             cps-automation/target/screenshots/
           retention-days: 30
@@ -92,12 +92,17 @@ jobs:
           path: cps-automation/target/surefire-reports/*.xml
           reporter: java-junit
           fail-on-error: false
+          only-summary: 'true'
 
       - name: Prepare Cucumber Report for Pages
         if: always()
         run: |
-          if not exist report-site mkdir report-site
-          copy cps-automation\target\cucumber-reports\cucumber.html report-site\index.html
+          if not exist report-site (mkdir report-site)
+          if exist cps-automation\target\cucumber-reports\cucumber.html (
+            copy cps-automation\target\cucumber-reports\cucumber.html report-site\index.html
+          ) else (
+            echo ^<h1^>No report found^</h1^> > report-site\index.html
+          )
 
       - name: Deploy Cucumber Report to GitHub Pages
         if: always()
