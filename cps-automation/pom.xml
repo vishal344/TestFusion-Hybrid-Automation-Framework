@@ -131,7 +131,7 @@
 						<baseUrl>${baseUrl}</baseUrl>
 					</systemPropertyVariables>
 					<argLine>
-						-javaagent:"${settings.localRepository}/org/aspectj/aspectjweaver/1.9.21/aspectjweaver-1.9.21.jar"
+						-javaagent:"C:/Users/HP/.m2/repository/org/aspectj/aspectjweaver/1.9.21/aspectjweaver-1.9.21.jar"
 					</argLine>
 				</configuration>
 			</plugin>
