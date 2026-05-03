@@ -141,7 +141,7 @@
 				<version>2.12.0</version>
 				<configuration>
 					<reportVersion>2.25.0</reportVersion>
-					<resultsDirectory>${project.build.directory}/allure-results</resultsDirectory>
+					<resultsDirectory>C:/Users/HP/.m2/repository/allure-results</resultsDirectory>
 				</configuration>
 			</plugin>
 		</plugins>
