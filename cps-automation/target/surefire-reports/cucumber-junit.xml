@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="Cucumber" time="705.623" tests="1" skipped="0" failures="0" errors="0">
-<testcase classname="RFQ item management" name="Add item from Excel sheet and send to Vendor successfully" time="704.518">
+<testsuite name="Cucumber" time="712.353" tests="1" skipped="0" failures="0" errors="0">
+<testcase classname="RFQ item management" name="Add item from Excel sheet and send to Vendor successfully" time="710.967">
 <system-out><![CDATA[
 Given User is on the RFQ details page.......................................passed
 When User clicks on "Add Row" button........................................passed

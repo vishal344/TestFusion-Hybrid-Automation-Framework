@@ -7,39 +7,16 @@
 	<version>0.0.1-SNAPSHOT</version>
 	<name>cps-automation</name>
 	<url>http://www.example.com</url>
+
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.release>17</maven.compiler.release>
-		<!--  Jenkins passes -DsuiteFile=testng-smoke.xml to override  -->
 		<suiteFile>testng.xml</suiteFile>
-		<!--  Jenkins passes -Dbrowser=chrome  -->
 		<browser>chrome</browser>
-		<!--  Jenkins passes -DbaseUrl=http://... to override app URL  -->
 		<baseUrl>http://162.244.66.135:8989/rev-aux/buyerlogin</baseUrl>
 	</properties>
-	<dependencyManagement>
-		<dependencies>
-			<dependency>
-				<groupId>org.junit</groupId>
-				<artifactId>junit-bom</artifactId>
-				<version>5.11.0</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-		</dependencies>
-	</dependencyManagement>
+
 	<dependencies>
-		<!--  ── Existing dependencies (unchanged) ───────────────────  -->
-		<dependency>
-			<groupId>org.junit.jupiter</groupId>
-			<artifactId>junit-jupiter-api</artifactId>
-			<scope>test</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.junit.jupiter</groupId>
-			<artifactId>junit-jupiter-params</artifactId>
-			<scope>test</scope>
-		</dependency>
 		<dependency>
 			<groupId>org.seleniumhq.selenium</groupId>
 			<artifactId>selenium-java</artifactId>
@@ -81,7 +58,6 @@
 			<artifactId>poi-ooxml</artifactId>
 			<version>5.2.3</version>
 		</dependency>
-		<!--  ── NEW: Allure for Jenkins HTML reports ────────────────  -->
 		<dependency>
 			<groupId>io.qameta.allure</groupId>
 			<artifactId>allure-testng</artifactId>
@@ -92,13 +68,13 @@
 			<artifactId>allure-cucumber7-jvm</artifactId>
 			<version>2.25.0</version>
 		</dependency>
-		<!--  Required by allure-testng for bytecode weaving  -->
 		<dependency>
 			<groupId>org.aspectj</groupId>
 			<artifactId>aspectjweaver</artifactId>
 			<version>1.9.21</version>
 		</dependency>
 	</dependencies>
+
 	<build>
 		<pluginManagement>
 			<plugins>
@@ -136,43 +112,36 @@
 				</plugin>
 			</plugins>
 		</pluginManagement>
+
 		<plugins>
-			<!--  ── Maven Surefire: runs TestNG via testng.xml ────────  -->
-			<!--  replaces the pluginManagement-only entry above         -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>3.3.0</version>
 				<configuration>
-					<!--  Jenkins overrides with -DsuiteFile=testng-smoke.xml  -->
 					<suiteXmlFiles>
 						<suiteXmlFile>${suiteFile}</suiteXmlFile>
 					</suiteXmlFiles>
-					<!-- 
-						IMPORTANT: testFailureIgnore=true means Maven does NOT
-						fail the build when tests fail. Jenkins Quality Gate
-						stage reads testng-results.xml and fails the build
-						itself — giving us a proper Allure report first.
-					 -->
 					<testFailureIgnore>true</testFailureIgnore>
+					<dependenciesToScan>
+						<dependency>org.testng:testng</dependency>
+					</dependenciesToScan>
 					<systemPropertyVariables>
-						<!--  makes -Dbrowser and -DbaseUrl available inside Java  -->
 						<browser>${browser}</browser>
 						<baseUrl>${baseUrl}</baseUrl>
 					</systemPropertyVariables>
-					<!--  aspectjweaver needed by Allure to intercept TestNG  -->
 					<argLine>
-						-javaagent:"${settings.localRepository}/org/aspectj/aspectjweaver/1.9.21/aspectjweaver-1.9.21.jar" </argLine>
+						-javaagent:"C:/Users/HP/.m2/repository/org/aspectj/aspectjweaver/1.9.21/aspectjweaver-1.9.21.jar"
+					</argLine>
 				</configuration>
 			</plugin>
-			<!--  ── Allure Maven plugin: generates HTML report ─────────  -->
 			<plugin>
 				<groupId>io.qameta.allure</groupId>
 				<artifactId>allure-maven</artifactId>
 				<version>2.12.0</version>
 				<configuration>
 					<reportVersion>2.25.0</reportVersion>
-					<resultsDirectory>${project.build.directory}/allure-results</resultsDirectory>
+					<resultsDirectory>C:/Users/HP/.m2/repository/allure-results</resultsDirectory>
 				</configuration>
 			</plugin>
 		</plugins>
