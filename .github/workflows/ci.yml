@@ -1,8 +1,6 @@
 name: CPS Automation — CI/CD Pipeline
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       suite:
@@ -53,9 +51,7 @@ jobs:
 
       - name: Run Tests
         working-directory: cps-automation
-        env:
-          CI: true
-        run: mvn test "-DsuiteFile=${{ github.event.inputs.suite || 'testng.xml' }}" "-Dbrowser=${{ github.event.inputs.browser || 'chrome' }}" "-Dcucumber.filter.tags=${{ github.event.inputs.tag || '@RFQDetailsModule' }}" "-DbaseUrl=http://162.244.66.135:8989/rev-aux/buyerlogin" "-DtestFailureIgnore=true"
+        run: mvn test "-DsuiteFile=${{ github.event.inputs.suite || 'testng.xml' }}" "-Dbrowser=${{ github.event.inputs.browser || 'chrome' }}" "-Dcucumber.filter.tags=${{ github.event.inputs.tag || '@RFQDetailsModule' }}" "-DbaseUrl=http://162.244.66.135:8989/rev-aux/buyerlogin" "-DtestFailureIgnore=true" "-DrfqId=NT79"
 
       - name: Show Report Files
         if: always()
@@ -64,6 +60,8 @@ jobs:
           dir cps-automation\target\surefire-reports
           echo === cucumber-reports ===
           dir cps-automation\target\cucumber-reports
+          echo === allure-results ===
+          dir cps-automation\target\allure-results
 
       - name: Upload Test Artifacts
         if: always()
@@ -74,20 +72,35 @@ jobs:
             cps-automation/target/cucumber-reports/
             cps-automation/target/surefire-reports/
             cps-automation/target/screenshots/
+            cps-automation/target/allure-results/
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Prepare Cucumber Report for Pages
+      - name: Generate Allure Report
+        if: always()
+        working-directory: cps-automation
+        run: mvn allure:report -q
+
+      - name: Prepare Reports for GitHub Pages
         if: always()
         run: |
-          if not exist report-site (mkdir report-site)
+          if not exist report-site mkdir report-site
+          if not exist report-site\cucumber mkdir report-site\cucumber
+          if not exist report-site\allure mkdir report-site\allure
           if exist cps-automation\target\cucumber-reports\cucumber.html (
-            copy cps-automation\target\cucumber-reports\cucumber.html report-site\index.html
-          ) else (
-            echo ^<h1^>No report found^</h1^> > report-site\index.html
+            copy cps-automation\target\cucumber-reports\cucumber.html report-site\cucumber\index.html
           )
+          if exist cps-automation\target\site\allure-maven-plugin (
+            xcopy /E /I /Y cps-automation\target\site\allure-maven-plugin report-site\allure
+          )
+          echo ^<html^>^<head^>^<title^>CPS Automation Reports^</title^>^</head^>^<body^> > report-site\index.html
+          echo ^<h1^>CPS Automation Test Reports^</h1^> >> report-site\index.html
+          echo ^<ul^> >> report-site\index.html
+          echo ^<li^>^<a href="allure/index.html"^>Allure Report^</a^>^</li^> >> report-site\index.html
+          echo ^<li^>^<a href="cucumber/index.html"^>Cucumber Report^</a^>^</li^> >> report-site\index.html
+          echo ^</ul^>^</body^>^</html^> >> report-site\index.html
 
-      - name: Deploy Cucumber Report to GitHub Pages
+      - name: Deploy Reports to GitHub Pages
         if: always()
         uses: peaceiris/actions-gh-pages@v3
         with:
