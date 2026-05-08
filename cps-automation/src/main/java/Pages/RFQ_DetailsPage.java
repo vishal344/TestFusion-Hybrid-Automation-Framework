@@ -32,12 +32,16 @@ public class RFQ_DetailsPage {
 
 	// ── Locators ──────────────────────────────────────────────────
 	By procurementMenu = By.xpath("//span[contains(text(),'Procurement')]");
-	By rfqMenu = By.xpath("//span[contains(text(),'RFQ')]");
-	By rfqid = By.xpath("//a[contains(@onclick,'redirectToRFQ')]");
-	By addRowBtn = By.id("addRowBtn");
-	By sendEmailBtn = By.id("sendMail");
+	By rfqMenu         = By.xpath("//span[contains(text(),'RFQ')]");
+	By rfqid           = By.xpath("//a[contains(@onclick,'redirectToRFQ')]");
+	By addRowBtn       = By.id("addRowBtn");
+	By sendEmailBtn    = By.id("sendMail");
 
-	private Map<String, Integer> tdMap = new LinkedHashMap<>();
+	private Map<String, Integer> tdMap   = new LinkedHashMap<>();
+
+	// FIX 1: imageMap is now keyed by 1-based DATA row number (not Excel anchor row index).
+	// Previously anchor.getRow1() gave 0-based Excel row indices that did not reliably
+	// match the page's data-line values, causing row 11 to reuse data-line=10.
 	private Map<Integer, String> imageMap = new LinkedHashMap<>();
 
 	private static final int MAX_ATTEMPTS = 3;
@@ -47,10 +51,7 @@ public class RFQ_DetailsPage {
 	// ─────────────────────────────────────────────────────────────
 
 	private void sleep(long ms) {
-		try {
-			Thread.sleep(ms);
-		} catch (InterruptedException ignored) {
-		}
+		try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
 	}
 
 	private void dismissAlertIfPresent() {
@@ -58,65 +59,50 @@ public class RFQ_DetailsPage {
 			Alert alert = alertWait.until(ExpectedConditions.alertIsPresent());
 			System.out.println("  [Alert] Dismissing: " + alert.getText());
 			alert.accept();
-		} catch (Exception ignored) {
-		}
+		} catch (Exception ignored) {}
 	}
 
-	/**
-	 * FIX: Dismiss any visible toastr/notification overlays before interacting. The
-	 * root cause of the ElementClickInterceptedException was a toastr <div>
-	 * blocking clicks on the textarea. This method: 1. Waits up to 5s for the
-	 * toastr to vanish on its own (common auto-dismiss). 2. If still present,
-	 * force-removes it via JavaScript so clicks go through.
-	 */
 	private void dismissToastrIfPresent() {
 		try {
-			// Common toastr selectors — add more if your app uses different classes
 			String toastrSelector = "div.toastr-message, div.toast, div.toast-message, "
 					+ "div.toastr, div#toast-container, div.jq-toast-wrap";
 
-			// Wait up to 5s for natural auto-dismiss
 			try {
 				new WebDriverWait(driver, Duration.ofSeconds(5)).until(d -> {
 					List<WebElement> toasts = d.findElements(By.cssSelector(toastrSelector));
 					return toasts.stream().noneMatch(WebElement::isDisplayed);
 				});
-				return; // Toastr gone on its own
-			} catch (TimeoutException ignored) {
-				// Still showing — force remove via JS
-			}
+				return;
+			} catch (TimeoutException ignored) {}
 
-			// Force-remove all matching toastr elements
-			((JavascriptExecutor) driver).executeScript("var selectors = ['.toastr-message','.toast','.toast-message',"
-					+ "'.toastr','#toast-container','.jq-toast-wrap'];" + "selectors.forEach(function(sel){"
+			((JavascriptExecutor) driver).executeScript(
+					"var selectors = ['.toastr-message','.toast','.toast-message',"
+					+ "'.toastr','#toast-container','.jq-toast-wrap'];"
+					+ "selectors.forEach(function(sel){"
 					+ "  document.querySelectorAll(sel).forEach(function(el){"
-					+ "    el.parentNode && el.parentNode.removeChild(el);" + "  });" + "});"
-					+ "var body = document.querySelector('body');" + "if(body) body.style.pointerEvents = '';");
+					+ "    el.parentNode && el.parentNode.removeChild(el);"
+					+ "  });"
+					+ "});"
+					+ "var body = document.querySelector('body');"
+					+ "if(body) body.style.pointerEvents = '';");
 
 			System.out.println("  [Toastr] Force-removed blocking notification");
 			sleep(150);
 
 		} catch (Exception e) {
-			// Non-critical — log and continue
 			System.out.println("  [Toastr] Dismissal attempt failed (non-fatal): " + e.getMessage());
 		}
 	}
 
-	/**
-	 * FIX: safeSendKeys now dismisses toastr BEFORE attempting the click.
-	 * Previously only alerts were dismissed, leaving toastr overlays able to
-	 * intercept clicks — causing ElementClickInterceptedException on td[17].
-	 */
 	private void safeSendKeys(By locator, String value) {
 		for (int i = 0; i < MAX_ATTEMPTS; i++) {
 			try {
 				dismissAlertIfPresent();
-				dismissToastrIfPresent(); // ← KEY FIX: clear toastr before every click
+				dismissToastrIfPresent();
 
 				WebElement el = wait.until(ExpectedConditions.elementToBeClickable(locator));
 				((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", el);
 
-				// Extra safety: if element still not clickable after scroll, use JS click
 				try {
 					el.click();
 				} catch (ElementClickInterceptedException intercepted) {
@@ -129,9 +115,9 @@ public class RFQ_DetailsPage {
 
 				el.clear();
 				el.sendKeys(value);
-				((JavascriptExecutor) driver)
-						.executeScript("arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
-								+ "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el);
+				((JavascriptExecutor) driver).executeScript(
+						"arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+						+ "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el);
 				return;
 			} catch (StaleElementReferenceException e) {
 				System.out.println("  [StaleRetry] safeSendKeys attempt " + (i + 1) + " for: " + locator);
@@ -145,7 +131,8 @@ public class RFQ_DetailsPage {
 		for (int i = 0; i < MAX_ATTEMPTS; i++) {
 			try {
 				WebElement el = driver.findElement(locator);
-				((JavascriptExecutor) driver).executeScript("arguments[0].value=arguments[1];"
+				((JavascriptExecutor) driver).executeScript(
+						"arguments[0].value=arguments[1];"
 						+ "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
 						+ "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el, value);
 				return;
@@ -166,27 +153,9 @@ public class RFQ_DetailsPage {
 	// NAVIGATE
 	// ─────────────────────────────────────────────────────────────
 
-	/*
-	 * public void navigateToRFQPage() { wait.until(d -> ((JavascriptExecutor)
-	 * d).executeScript("return document.readyState").equals("complete"));
-	 * 
-	 * WebElement procurement =
-	 * wait.until(ExpectedConditions.elementToBeClickable(procurementMenu));
-	 * ((JavascriptExecutor) driver).executeScript(
-	 * "arguments[0].scrollIntoView({block:'center'});", procurement); try {
-	 * procurement.click(); } catch (Exception e) { ((JavascriptExecutor)
-	 * driver).executeScript("arguments[0].click();", procurement); }
-	 * 
-	 * wait.until(ExpectedConditions.elementToBeClickable(rfqMenu)).click();
-	 * wait.until(ExpectedConditions.elementToBeClickable(rfqid)).click();
-	 * wait.until(d -> ((JavascriptExecutor)
-	 * d).executeScript("return document.readyState").equals("complete")); }
-	 */
-
 	public void navigateToRFQPage() {
 		wait.until(d -> ((JavascriptExecutor) d).executeScript("return document.readyState").equals("complete"));
 
-		// Step 1 — Click Procurement menu
 		WebElement procurement = wait.until(ExpectedConditions.elementToBeClickable(procurementMenu));
 		((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", procurement);
 		try {
@@ -195,14 +164,11 @@ public class RFQ_DetailsPage {
 			((JavascriptExecutor) driver).executeScript("arguments[0].click();", procurement);
 		}
 
-		// Step 2 — Click RFQ menu
 		wait.until(ExpectedConditions.elementToBeClickable(rfqMenu)).click();
 
-		// Step 3 — Wait for RFQ list page to load
 		wait.until(d -> ((JavascriptExecutor) d).executeScript("return document.readyState").equals("complete"));
 		sleep(1500);
 
-		// Step 4 — Search for RFQ ID
 		String rfqIdToSearch = System.getProperty("rfqId", "NT79");
 		System.out.println("[Navigation] Searching for RFQ ID: " + rfqIdToSearch);
 
@@ -216,10 +182,8 @@ public class RFQ_DetailsPage {
 			System.out.println("[Navigation] Search box not found: " + e.getMessage());
 		}
 
-		// Step 5 — Click RFQ link after search
 		boolean clicked = false;
 
-		// Try 1 — match by onclick attribute containing rfqId
 		try {
 			By rfqLinkBy = By.xpath("//a[contains(@onclick,'" + rfqIdToSearch + "')]");
 			WebElement rfqLink = new WebDriverWait(driver, Duration.ofSeconds(10))
@@ -231,7 +195,6 @@ public class RFQ_DetailsPage {
 			System.out.println("[Navigation] Try 1 failed: " + e.getMessage());
 		}
 
-		// Try 2 — match by class rfq-id
 		if (!clicked) {
 			try {
 				By rfqLinkBy = By.xpath("//a[contains(@class,'rfq-id')]");
@@ -249,11 +212,11 @@ public class RFQ_DetailsPage {
 			throw new RuntimeException("Could not find and click RFQ link for ID: " + rfqIdToSearch);
 		}
 
-		// Step 6 — Wait for details page
 		wait.until(d -> ((JavascriptExecutor) d).executeScript("return document.readyState").equals("complete"));
 		sleep(1000);
 		System.out.println("[Navigation] RFQ details page loaded");
 	}
+
 	// ─────────────────────────────────────────────────────────────
 	// ADD ROW
 	// ─────────────────────────────────────────────────────────────
@@ -262,23 +225,17 @@ public class RFQ_DetailsPage {
 		dismissAlertIfPresent();
 		dismissToastrIfPresent();
 
-		// Count rows before
 		int rowsBefore = driver.findElements(By.xpath("//table//tbody//tr[td]")).size();
 
 		WebElement btn = wait.until(ExpectedConditions.elementToBeClickable(addRowBtn));
 		((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView(true);", btn);
 		((JavascriptExecutor) driver).executeScript("window.scrollBy(0,-100);");
-
-		// Click ONCE only
 		((JavascriptExecutor) driver).executeScript("arguments[0].click();", btn);
 
-		// Wait up to 30s for exactly one new row
 		long deadline = System.currentTimeMillis() + 30000;
 		while (System.currentTimeMillis() < deadline) {
 			int currentRows = driver.findElements(By.xpath("//table//tbody//tr[td]")).size();
-			if (currentRows == rowsBefore + 1) {
-				break; // exactly one row added — stop waiting
-			}
+			if (currentRows == rowsBefore + 1) break;
 			if (currentRows > rowsBefore + 1) {
 				System.out.println("[WARN] More than 1 row added — stopping");
 				break;
@@ -286,20 +243,20 @@ public class RFQ_DetailsPage {
 			sleep(300);
 		}
 
-		// Wait for new row inputs
 		try {
 			new WebDriverWait(driver, Duration.ofSeconds(10)).until(d -> d
-					.findElements(
-							By.xpath("//table//tbody//tr[last()]//input | " + "//table//tbody//tr[last()]//textarea"))
+					.findElements(By.xpath(
+							"//table//tbody//tr[last()]//input | //table//tbody//tr[last()]//textarea"))
 					.size() >= 1);
 		} catch (TimeoutException ignored) {
 			System.out.println("  [WARN] New row fields slow to appear");
 		}
 
 		sleep(300);
-		System.out.println(
-				"New row added. Total rows: " + driver.findElements(By.xpath("//table//tbody//tr[td]")).size());
+		System.out.println("New row added. Total rows: "
+				+ driver.findElements(By.xpath("//table//tbody//tr[td]")).size());
 	}
+
 	// ─────────────────────────────────────────────────────────────
 	// DISCOVER TD INDICES
 	// ─────────────────────────────────────────────────────────────
@@ -355,27 +312,22 @@ public class RFQ_DetailsPage {
 
 		List<WebElement> tds = driver.findElements(By.xpath("//table//tbody//tr[last()]//td"));
 
-		// Count leading non-input TDs
 		int leadingSkip = 0;
 		for (WebElement td : tds) {
 			boolean useful = !td.findElements(By.tagName("input")).isEmpty()
 					|| !td.findElements(By.tagName("textarea")).isEmpty()
 					|| !td.findElements(By.tagName("select")).isEmpty()
 					|| !td.findElements(By.xpath(".//span[contains(@class,'price')]")).isEmpty();
-			if (!useful)
-				leadingSkip++;
-			else
-				break;
+			if (!useful) leadingSkip++;
+			else break;
 		}
 		System.out.println("  Leading non-input TDs: " + leadingSkip);
 
-		// ALWAYS use leadingSkip=2 for correct TD mapping
-		// regardless of how many rows exist in the table
 		leadingSkip = 2;
 		System.out.println("  Forcing leadingSkip=2 for consistent TD mapping");
 
-		String[] colOrder = { "partNumber", "partName", null, "resin", "cav", "injSystem", "gate", "eau", "steel",
-				"ejection", "moldFeatures", "targetPrice", null, null, "notes" };
+		String[] colOrder = { "partNumber", "partName", null, "resin", "cav", "injSystem", "gate",
+				"eau", "steel", "ejection", "moldFeatures", "targetPrice", null, null, "notes" };
 
 		int colIdx = 0;
 		for (int i = leadingSkip; i < tds.size() && colIdx < colOrder.length; i++) {
@@ -391,6 +343,7 @@ public class RFQ_DetailsPage {
 		}
 		System.out.println("Positional TD map: " + tdMap);
 	}
+
 	// ─────────────────────────────────────────────────────────────
 	// ENTER TEXT
 	// ─────────────────────────────────────────────────────────────
@@ -403,25 +356,23 @@ public class RFQ_DetailsPage {
 
 		String base = "//table//tbody//tr[last()]//td[" + tdIndex + "]";
 		By specificTextareaBy = By.xpath(base + "//textarea[contains(@class,'rfq-textarea-display')]");
-		By anyTextareaBy = By.xpath(
-				base + "//textarea[not(contains(@style,'display:none')) and not(contains(@style,'display: none'))]");
-		By specificInputBy = By.xpath(
-				base + "//input[contains(@class,'editable-field') and not(contains(@class,'rfq-hidden-input'))]");
-		By anyInputBy = By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]");
-		By selectBy = By.xpath(base + "//select");
-		By contentEditableBy = By.xpath(base + "//*[@contenteditable='true']");
-		By hiddenInputBy = By.xpath(base + "//input[contains(@class,'rfq-hidden-input')]");
+		By anyTextareaBy      = By.xpath(base + "//textarea[not(contains(@style,'display:none')) and not(contains(@style,'display: none'))]");
+		By specificInputBy    = By.xpath(base + "//input[contains(@class,'editable-field') and not(contains(@class,'rfq-hidden-input'))]");
+		By anyInputBy         = By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]");
+		By selectBy           = By.xpath(base + "//select");
+		By contentEditableBy  = By.xpath(base + "//*[@contenteditable='true']");
+		By hiddenInputBy      = By.xpath(base + "//input[contains(@class,'rfq-hidden-input')]");
 
 		boolean hasSpecificTextarea = !driver.findElements(specificTextareaBy).isEmpty();
-		boolean hasAnyTextarea = !driver.findElements(anyTextareaBy).isEmpty();
-		boolean hasSpecificInput = !driver.findElements(specificInputBy).isEmpty();
-		boolean hasAnyInput = !driver.findElements(anyInputBy).isEmpty();
-		boolean hasSelect = !driver.findElements(selectBy).isEmpty();
-		boolean hasContentEditable = !driver.findElements(contentEditableBy).isEmpty();
+		boolean hasAnyTextarea      = !driver.findElements(anyTextareaBy).isEmpty();
+		boolean hasSpecificInput    = !driver.findElements(specificInputBy).isEmpty();
+		boolean hasAnyInput         = !driver.findElements(anyInputBy).isEmpty();
+		boolean hasSelect           = !driver.findElements(selectBy).isEmpty();
+		boolean hasContentEditable  = !driver.findElements(contentEditableBy).isEmpty();
 
 		if (hasSpecificTextarea || hasAnyTextarea) {
 			By taBy = hasSpecificTextarea ? specificTextareaBy : anyTextareaBy;
-			safeSendKeys(taBy, value); // toastr dismissal is now inside safeSendKeys
+			safeSendKeys(taBy, value);
 			if (!driver.findElements(hiddenInputBy).isEmpty())
 				safeJsSetValue(hiddenInputBy, value);
 			System.out.println("  td[" + tdIndex + "] textarea ← " + value);
@@ -429,7 +380,7 @@ public class RFQ_DetailsPage {
 		}
 		if (hasSpecificInput || hasAnyInput) {
 			By inpBy = hasSpecificInput ? specificInputBy : anyInputBy;
-			safeSendKeys(inpBy, value); // toastr dismissal is now inside safeSendKeys
+			safeSendKeys(inpBy, value);
 			System.out.println("  td[" + tdIndex + "] input ← " + value);
 			return;
 		}
@@ -456,9 +407,11 @@ public class RFQ_DetailsPage {
 				WebElement td = driver.findElement(tdBy);
 				((JavascriptExecutor) driver).executeScript(
 						"var td=arguments[0],v=arguments[1];"
-								+ "var el=td.querySelector('input')||td.querySelector('textarea');"
-								+ "if(el){el.value=v;" + "el.dispatchEvent(new Event('input',{bubbles:true}));"
-								+ "el.dispatchEvent(new Event('change',{bubbles:true}));}" + "else{td.innerText=v;}",
+						+ "var el=td.querySelector('input')||td.querySelector('textarea');"
+						+ "if(el){el.value=v;"
+						+ "el.dispatchEvent(new Event('input',{bubbles:true}));"
+						+ "el.dispatchEvent(new Event('change',{bubbles:true}));}"
+						+ "else{td.innerText=v;}",
 						td, value);
 				System.out.println("  td[" + tdIndex + "] JS-inject ← " + value);
 				return;
@@ -471,6 +424,9 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// UPLOAD IMAGE
+	// FIX 2: Use wait.until(presenceOfElementLocated) instead of findElement
+	// so we reliably get the actual current data-line from the DOM after
+	// force-closed modals (which could leave the page in a transitional state).
 	// ─────────────────────────────────────────────────────────────
 
 	public void uploadImageForRow(String imagePath) {
@@ -484,10 +440,12 @@ public class RFQ_DetailsPage {
 			return;
 		}
 
+		// FIX 2: Use explicit wait so we always get a stable element after
+		// a force-closed modal, rather than catching a stale reference.
 		String actualDataLine = null;
 		try {
-			WebElement priceSpan = driver
-					.findElement(By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]"));
+			WebElement priceSpan = wait.until(ExpectedConditions.presenceOfElementLocated(
+					By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]")));
 			actualDataLine = priceSpan.getAttribute("data-line");
 		} catch (Exception e) {
 			System.out.println("  [Image] Could not read data-line: " + e.getMessage());
@@ -515,27 +473,34 @@ public class RFQ_DetailsPage {
 			String base64Image = java.util.Base64.getEncoder().encodeToString(imgBytes);
 			String mimeType = "image/png";
 			String lname = imgFile.getName().toLowerCase();
-			if (lname.endsWith(".jpg") || lname.endsWith(".jpeg"))
-				mimeType = "image/jpeg";
-			else if (lname.endsWith(".gif"))
-				mimeType = "image/gif";
-			else if (lname.endsWith(".webp"))
-				mimeType = "image/webp";
+			if (lname.endsWith(".jpg") || lname.endsWith(".jpeg")) mimeType = "image/jpeg";
+			else if (lname.endsWith(".gif"))  mimeType = "image/gif";
+			else if (lname.endsWith(".webp")) mimeType = "image/webp";
 
-			String jsIntercept = "(function() {" + "  var origClick = HTMLInputElement.prototype.click;"
-					+ "  HTMLInputElement.prototype.click = function() {" + "    if (this.type === 'file') {"
+			String jsIntercept = "(function() {"
+					+ "  var origClick = HTMLInputElement.prototype.click;"
+					+ "  HTMLInputElement.prototype.click = function() {"
+					+ "    if (this.type === 'file') {"
 					+ "      var b64='" + base64Image + "', mime='" + mimeType + "', fname='" + imgFile.getName() + "';"
-					+ "      try {" + "        var bin=atob(b64), arr=new Uint8Array(bin.length);"
+					+ "      try {"
+					+ "        var bin=atob(b64), arr=new Uint8Array(bin.length);"
 					+ "        for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);"
 					+ "        var blob=new Blob([arr],{type:mime});"
 					+ "        var file=new File([blob],fname,{type:mime,lastModified:Date.now()});"
-					+ "        var dt=new DataTransfer(); dt.items.add(file);" + "        this.files=dt.files;"
-					+ "        var self=this;" + "        setTimeout(function(){"
+					+ "        var dt=new DataTransfer(); dt.items.add(file);"
+					+ "        this.files=dt.files;"
+					+ "        var self=this;"
+					+ "        setTimeout(function(){"
 					+ "          self.dispatchEvent(new Event('change',{bubbles:true}));"
-					+ "          self.dispatchEvent(new Event('input',{bubbles:true}));" + "        },100);"
+					+ "          self.dispatchEvent(new Event('input',{bubbles:true}));"
+					+ "        },100);"
 					+ "      } catch(e){console.error('intercept error:',e);}"
-					+ "      HTMLInputElement.prototype.click=origClick;" + "      return;" + "    }"
-					+ "    return origClick.apply(this,arguments);" + "  };" + "})();";
+					+ "      HTMLInputElement.prototype.click=origClick;"
+					+ "      return;"
+					+ "    }"
+					+ "    return origClick.apply(this,arguments);"
+					+ "  };"
+					+ "})();";
 
 			((JavascriptExecutor) driver).executeScript(jsIntercept);
 			System.out.println("  [Image] File input interceptor installed");
@@ -577,29 +542,28 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// TARGET PRICE POPUP
+	// FIX 3: After force-close, explicitly wait for .modal-backdrop to clear
+	// before returning. Previously the backdrop remained in the DOM and blocked
+	// the next row's double-click on the price span, causing it to silently
+	// reuse the previous data-line.
 	// ─────────────────────────────────────────────────────────────
 
 	public void handleTargetPricePopup(String rawPrice) {
 		String price = rawPrice.replaceAll("[^0-9.]", "").trim();
-		if (price.isEmpty())
-			price = "0";
+		if (price.isEmpty()) price = "0";
 		System.out.println("  Opening Target Price popup for value: " + price);
 
-		// FIX: Always dismiss toastr before trying to open the price popup.
-		// Rows 6–9 showed "Modal still open after 30s — forcing close" which means
-		// the Save response triggered a toastr that then blocked the next row's
-		// double-click on the price span.
 		dismissToastrIfPresent();
 
-		By modalBy = By.id("customTargetPopupModal");
+		By modalBy    = By.id("customTargetPopupModal");
 		By priceSpanBy = By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]");
 
 		WebElement priceSpan = wait.until(ExpectedConditions.elementToBeClickable(priceSpanBy));
 		((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", priceSpan);
 		sleep(200);
 
-		System.out.println("  Price span: class='" + priceSpan.getAttribute("class") + "' data-line='"
-				+ priceSpan.getAttribute("data-line") + "'");
+		System.out.println("  Price span: class='" + priceSpan.getAttribute("class")
+				+ "' data-line='" + priceSpan.getAttribute("data-line") + "'");
 
 		new Actions(driver).doubleClick(priceSpan).perform();
 		System.out.println("  Double-clicked price span");
@@ -610,14 +574,13 @@ public class RFQ_DetailsPage {
 			try {
 				List<WebElement> m = driver.findElements(modalBy);
 				open = !m.isEmpty() && m.get(0).isDisplayed();
-			} catch (Exception ignored) {
-			}
-			if (open)
-				break;
+			} catch (Exception ignored) {}
+			if (open) break;
 			System.out.println("  Modal not open, JS dblclick attempt " + attempt);
-			dismissToastrIfPresent(); // ← FIX: clear toastr between retry attempts too
+			dismissToastrIfPresent();
 			WebElement freshSpan = driver.findElement(priceSpanBy);
-			((JavascriptExecutor) driver).executeScript("arguments[0].dispatchEvent(new MouseEvent('dblclick',"
+			((JavascriptExecutor) driver).executeScript(
+					"arguments[0].dispatchEvent(new MouseEvent('dblclick',"
 					+ "{bubbles:true,cancelable:true,view:window}));", freshSpan);
 			sleep(600);
 		}
@@ -626,10 +589,8 @@ public class RFQ_DetailsPage {
 		try {
 			List<WebElement> m = driver.findElements(modalBy);
 			modalOpen = !m.isEmpty() && m.get(0).isDisplayed();
-		} catch (Exception ignored) {
-		}
-		if (!modalOpen)
-			throw new RuntimeException("Target price modal did not open.");
+		} catch (Exception ignored) {}
+		if (!modalOpen) throw new RuntimeException("Target price modal did not open.");
 		System.out.println("  Modal is open");
 
 		WebElement modal = driver.findElement(modalBy);
@@ -643,14 +604,10 @@ public class RFQ_DetailsPage {
 		System.out.println("  Target Price Set <- " + price);
 		sleep(150);
 
-		fillModalField(modal, "Margin Factor", "10");
-		sleep(100);
-		fillModalField(modal, "Shipping Factor", "5");
-		sleep(100);
-		fillModalField(modal, "Tariff Factor", "12");
-		sleep(100);
-		fillModalField(modal, "CPS Handling Cost", "720");
-		sleep(150);
+		fillModalField(modal, "Margin Factor",    "10");  sleep(100);
+		fillModalField(modal, "Shipping Factor",  "5");   sleep(100);
+		fillModalField(modal, "Tariff Factor",    "12");  sleep(100);
+		fillModalField(modal, "CPS Handling Cost","720"); sleep(150);
 
 		List<WebElement> allBtns = modal.findElements(By.tagName("button"));
 		System.out.println("  Buttons in modal: " + allBtns.size());
@@ -659,15 +616,12 @@ public class RFQ_DetailsPage {
 			String cls = btn.getAttribute("class") != null ? btn.getAttribute("class").toLowerCase() : "";
 			String txt = btn.getText().trim();
 			System.out.println("    btn text='" + txt + "' class='" + cls + "'");
-			boolean isClose = cls.contains("close") || txt.equalsIgnoreCase("x") || txt.equalsIgnoreCase("cancel")
-					|| txt.equalsIgnoreCase("close");
-			if (!isClose && saveBtn == null)
-				saveBtn = btn;
+			boolean isClose = cls.contains("close") || txt.equalsIgnoreCase("x")
+					|| txt.equalsIgnoreCase("cancel") || txt.equalsIgnoreCase("close");
+			if (!isClose && saveBtn == null) saveBtn = btn;
 		}
-		if (saveBtn == null && !allBtns.isEmpty())
-			saveBtn = allBtns.get(allBtns.size() - 1);
-		if (saveBtn == null)
-			throw new RuntimeException("No Save button in target price modal.");
+		if (saveBtn == null && !allBtns.isEmpty()) saveBtn = allBtns.get(allBtns.size() - 1);
+		if (saveBtn == null) throw new RuntimeException("No Save button in target price modal.");
 
 		((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", saveBtn);
 		sleep(100);
@@ -697,29 +651,46 @@ public class RFQ_DetailsPage {
 		} else {
 			System.out.println("  Modal still open after 30s — forcing close");
 			try {
-				((JavascriptExecutor) driver).executeScript("var m=document.getElementById('customTargetPopupModal');"
-						+ "if(m){m.style.display='none';" + "document.body.classList.remove('modal-open');"
+				((JavascriptExecutor) driver).executeScript(
+						"var m=document.getElementById('customTargetPopupModal');"
+						+ "if(m){m.style.display='none';"
+						+ "document.body.classList.remove('modal-open');"
 						+ "var b=document.querySelector('.modal-backdrop');if(b)b.remove();}");
-			} catch (Exception ignored) {
-			}
+			} catch (Exception ignored) {}
 			dismissAlertIfPresent();
+
+			// FIX 3: After force-close, explicitly wait for the backdrop to be gone
+			// from the DOM before returning. This prevents the next row's double-click
+			// on the price span from being swallowed by a lingering backdrop overlay,
+			// which was the direct cause of row 11 reusing data-line=10.
+			try {
+				new WebDriverWait(driver, Duration.ofSeconds(5)).until(d ->
+						d.findElements(By.cssSelector(".modal-backdrop")).isEmpty()
+				);
+				System.out.println("  Backdrop cleared");
+			} catch (TimeoutException ignored) {
+				// Force-remove backdrop via JS as last resort
+				try {
+					((JavascriptExecutor) driver).executeScript(
+							"document.querySelectorAll('.modal-backdrop').forEach(function(el){"
+							+ "  el.parentNode && el.parentNode.removeChild(el);"
+							+ "});"
+							+ "document.body.classList.remove('modal-open');"
+							+ "document.body.style.overflow='';");
+					System.out.println("  Backdrop force-removed via JS");
+				} catch (Exception ignored2) {}
+			}
 		}
 
-		// FIX: After modal closes (or is force-closed), wait for any resulting
-		// toastr to appear and then dismiss it BEFORE returning to row filling.
-		// This is what caused the failure on row 10: the toastr from row 9's
-		// price save was still visible when row 10 tried to click the Notes textarea.
+		// Dismiss any toastr triggered by the Save response before next row starts
 		try {
-			// Give toastr a moment to appear after Save
 			sleep(400);
 			dismissToastrIfPresent();
-		} catch (Exception ignored) {
-		}
+		} catch (Exception ignored) {}
 
 		try {
 			wait.until(d -> ((JavascriptExecutor) d).executeScript("return document.readyState").equals("complete"));
-		} catch (Exception ignored) {
-		}
+		} catch (Exception ignored) {}
 		dismissAlertIfPresent();
 		sleep(500);
 		System.out.println("  Target Price popup done");
@@ -731,7 +702,7 @@ public class RFQ_DetailsPage {
 
 	public void clickSendEmail() {
 		System.out.println("  Clicking Send Email button...");
-		dismissToastrIfPresent(); // ← FIX: clear any lingering toastr
+		dismissToastrIfPresent();
 		WebElement btn = wait.until(ExpectedConditions.elementToBeClickable(sendEmailBtn));
 		((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", btn);
 		((JavascriptExecutor) driver).executeScript("arguments[0].click();", btn);
@@ -740,8 +711,8 @@ public class RFQ_DetailsPage {
 		System.out.println("  Send Email clicked — waiting for version popup...");
 
 		try {
-			wait.until(ExpectedConditions
-					.visibilityOfElementLocated(By.xpath("//button[contains(@onclick,'createVersion')]")));
+			wait.until(ExpectedConditions.visibilityOfElementLocated(
+					By.xpath("//button[contains(@onclick,'createVersion')]")));
 			System.out.println("  Version popup is visible");
 		} catch (Exception e) {
 			System.out.println("  [WARN] Version popup not detected — may have opened compose directly");
@@ -793,9 +764,11 @@ public class RFQ_DetailsPage {
 		notesTextarea.click();
 		notesTextarea.clear();
 		((JavascriptExecutor) driver).executeScript(
-				"arguments[0].value=''; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", notesTextarea);
+				"arguments[0].value=''; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
+				notesTextarea);
 		notesTextarea.sendKeys(noteText);
-		((JavascriptExecutor) driver).executeScript("arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+		((JavascriptExecutor) driver).executeScript(
+				"arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
 				+ "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", notesTextarea);
 		System.out.println("  Note entered: '" + noteText + "'");
 		sleep(200);
@@ -850,17 +823,22 @@ public class RFQ_DetailsPage {
 
 			try {
 				Boolean found = (Boolean) ((JavascriptExecutor) driver).executeScript(
-						"var name = arguments[0];" + "var cbs = document.querySelectorAll('input[type=\"checkbox\"]');"
-								+ "for (var i = 0; i < cbs.length; i++) {" + "  var cb = cbs[i];" + "  var txt = '';"
-								+ "  if (cb.parentElement)     txt += cb.parentElement.innerText     || '';"
-								+ "  if (cb.nextSibling)        txt += cb.nextSibling.textContent     || '';"
-								+ "  if (cb.nextElementSibling) txt += cb.nextElementSibling.innerText || '';"
-								+ "  var lbl = document.querySelector('label[for=\"' + cb.id + '\"]');"
-								+ "  if (lbl) txt += lbl.innerText || '';"
-								+ "  if (txt.replace(/\\s+/g,' ').trim().indexOf(name) >= 0) {"
-								+ "    cb.scrollIntoView({block:'center'});" + "    if (!cb.checked) {"
-								+ "      cb.click();" + "      cb.dispatchEvent(new Event('change',{bubbles:true}));"
-								+ "    }" + "    return true;" + "  }" + "}" + "return false;",
+						"var name = arguments[0];"
+						+ "var cbs = document.querySelectorAll('input[type=\"checkbox\"]');"
+						+ "for (var i = 0; i < cbs.length; i++) {"
+						+ "  var cb = cbs[i]; var txt = '';"
+						+ "  if (cb.parentElement)     txt += cb.parentElement.innerText     || '';"
+						+ "  if (cb.nextSibling)        txt += cb.nextSibling.textContent     || '';"
+						+ "  if (cb.nextElementSibling) txt += cb.nextElementSibling.innerText || '';"
+						+ "  var lbl = document.querySelector('label[for=\"' + cb.id + '\"]');"
+						+ "  if (lbl) txt += lbl.innerText || '';"
+						+ "  if (txt.replace(/\\s+/g,' ').trim().indexOf(name) >= 0) {"
+						+ "    cb.scrollIntoView({block:'center'});"
+						+ "    if (!cb.checked) { cb.click(); cb.dispatchEvent(new Event('change',{bubbles:true})); }"
+						+ "    return true;"
+						+ "  }"
+						+ "}"
+						+ "return false;",
 						name);
 
 				if (Boolean.TRUE.equals(found)) {
@@ -940,23 +918,23 @@ public class RFQ_DetailsPage {
 		System.out.println("  TD count=" + tdCount + " | tdMap=" + tdMap);
 
 		if (tdMap.containsKey("partNumber")) {
-			fillByMap("partNumber", rowData[0], "Part Number");
-			fillByMap("partName", rowData[1], "Part Name");
-			fillByMap("resin", rowData[2], "Resin");
-			fillByMap("cav", rowData[3], "Cav");
-			fillByMap("injSystem", rowData[4], "Injection System");
-			fillByMap("gate", rowData[5], "Gate");
-			fillByMap("eau", rowData[6], "EAU");
-			fillByMap("steel", rowData[7], "Steel");
-			fillByMap("ejection", rowData[8], "Ejection");
-			fillByMap("moldFeatures", rowData[9], "Mold Features");
-			fillByMap("notes", rowData[12], "Notes");
+			fillByMap("partNumber",   rowData[0],  "Part Number");
+			fillByMap("partName",     rowData[1],  "Part Name");
+			fillByMap("resin",        rowData[2],  "Resin");
+			fillByMap("cav",          rowData[3],  "Cav");
+			fillByMap("injSystem",    rowData[4],  "Injection System");
+			fillByMap("gate",         rowData[5],  "Gate");
+			fillByMap("eau",          rowData[6],  "EAU");
+			fillByMap("steel",        rowData[7],  "Steel");
+			fillByMap("ejection",     rowData[8],  "Ejection");
+			fillByMap("moldFeatures", rowData[9],  "Mold Features");
+			fillByMap("notes",        rowData[12], "Notes");
 		} else {
 			int o = (tdCount >= 33) ? 1 : 0;
-			enterText(5 + o, rowData[0]);
-			enterText(7 + o, rowData[1]);
-			enterText(6 + o, rowData[2]);
-			enterText(9 + o, rowData[3]);
+			enterText(5 + o,  rowData[0]);
+			enterText(7 + o,  rowData[1]);
+			enterText(6 + o,  rowData[2]);
+			enterText(9 + o,  rowData[3]);
 			enterText(10 + o, rowData[4]);
 			enterText(11 + o, rowData[5]);
 			enterText(12 + o, rowData[6]);
@@ -966,6 +944,7 @@ public class RFQ_DetailsPage {
 			enterText(19 + o, rowData[12]);
 		}
 
+		// imageMap is now keyed by 1-based data row index — matches excelRowIndex exactly
 		uploadImageForRow(imageMap.get(excelRowIndex));
 		handleTargetPricePopup(rowData[10]);
 	}
@@ -996,14 +975,16 @@ public class RFQ_DetailsPage {
 		((JavascriptExecutor) driver).executeScript(
 				"arguments[0].value=''; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", field);
 		field.sendKeys(value);
-		((JavascriptExecutor) driver).executeScript("arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+		((JavascriptExecutor) driver).executeScript(
+				"arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
 				+ "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", field);
 	}
 
 	private void fillModalField(WebElement modal, String labelText, String value) {
 		try {
 			WebElement field = modal.findElement(By.xpath(
-					".//label[contains(text(),'" + labelText + "')]" + "/following::input[not(@type='hidden')][1]"));
+					".//label[contains(text(),'" + labelText + "')]"
+					+ "/following::input[not(@type='hidden')][1]"));
 			clearAndType(field, value);
 			System.out.println("  " + labelText + " ← " + value);
 		} catch (Exception e) {
@@ -1013,26 +994,32 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// READ EXCEL (text + embedded images)
+	// FIX 1: Remap anchor row indices to 1-based data row numbers using TreeMap.
+	// Previously imageMap was keyed by anchor.getRow1() which is the 0-based Excel
+	// row index of the picture anchor — these do NOT reliably correspond to the
+	// sequential data-line values on the page. By sorting anchors and assigning
+	// sequential 1-based keys we guarantee imageMap.get(1) = first image,
+	// imageMap.get(11) = eleventh image, regardless of how POI reports anchor rows.
 	// ─────────────────────────────────────────────────────────────
 
 	public String[][] readExcelData(String filePath) throws Exception {
 		File file = new File(filePath);
 		System.out.println("Reading Excel: " + file.getAbsolutePath());
 
-		FileInputStream fis = new FileInputStream(file);
-		XSSFWorkbook workbook = new XSSFWorkbook(fis);
-		XSSFSheet sheet = workbook.getSheetAt(0);
-		DataFormatter formatter = new DataFormatter();
+		FileInputStream fis       = new FileInputStream(file);
+		XSSFWorkbook   workbook   = new XSSFWorkbook(fis);
+		XSSFSheet      sheet      = workbook.getSheetAt(0);
+		DataFormatter  formatter  = new DataFormatter();
 
-		int rowCount = sheet.getPhysicalNumberOfRows();
-		int dataCols = 13;
-		String[][] data = new String[rowCount - 1][dataCols];
+		int      rowCount = sheet.getPhysicalNumberOfRows();
+		int      dataCols = 13;
+		String[][] data   = new String[rowCount - 1][dataCols];
 
 		for (int i = 1; i < rowCount; i++) {
 			Row row = sheet.getRow(i);
 			for (int j = 0; j < dataCols; j++) {
-				int excelCol = (j < 2) ? (j + 1) : (j + 2);
-				Cell cell = (row == null) ? null : row.getCell(excelCol);
+				int  excelCol = (j < 2) ? (j + 1) : (j + 2);
+				Cell cell     = (row == null) ? null : row.getCell(excelCol);
 				data[i - 1][j] = (cell == null) ? "" : formatter.formatCellValue(cell);
 			}
 		}
@@ -1044,22 +1031,44 @@ public class RFQ_DetailsPage {
 		try {
 			XSSFDrawing drawing = sheet.getDrawingPatriarch();
 			if (drawing != null) {
+
+				// FIX 1A: Collect all picture anchors into a TreeMap sorted by anchor row.
+				// This gives us a stable insertion order independent of POI's internal ordering.
+				TreeMap<Integer, byte[]>  anchorToBytes = new TreeMap<>();
+				TreeMap<Integer, String>  anchorToExt   = new TreeMap<>();
+
 				for (XSSFShape shape : drawing.getShapes()) {
 					if (shape instanceof XSSFPicture) {
-						XSSFPicture pic = (XSSFPicture) shape;
+						XSSFPicture      pic    = (XSSFPicture) shape;
 						XSSFClientAnchor anchor = (XSSFClientAnchor) pic.getAnchor();
-						int excelRowIdx = anchor.getRow1();
-						XSSFPictureData picData = pic.getPictureData();
-						byte[] imgBytes = picData.getData();
-						String imgPath = tempDir + File.separator + "part_image_row" + excelRowIdx + "."
-								+ picData.suggestFileExtension();
-						try (FileOutputStream fos = new FileOutputStream(imgPath)) {
-							fos.write(imgBytes);
-						}
-						imageMap.put(excelRowIdx, imgPath);
-						System.out.println("  Extracted image: excelRow=" + excelRowIdx + " → " + imgPath + " ("
-								+ imgBytes.length + " bytes)");
+						int              aRow   = anchor.getRow1();
+						XSSFPictureData  pd     = pic.getPictureData();
+						// If two pictures share the same anchor row, keep the last one
+						anchorToBytes.put(aRow, pd.getData());
+						anchorToExt.put(aRow,   pd.suggestFileExtension());
 					}
+				}
+
+				// FIX 1B: Remap sorted anchor rows → sequential 1-based data row numbers.
+				// dataRowNum=1 corresponds to the first data row in the Excel sheet and
+				// to data-line=1 on the page. This is the key fix for row 11.
+				int dataRowNum = 1;
+				for (Map.Entry<Integer, byte[]> entry : anchorToBytes.entrySet()) {
+					int    anchorRow = entry.getKey();
+					byte[] imgBytes  = entry.getValue();
+					String ext       = anchorToExt.get(anchorRow);
+					String imgPath   = tempDir + File.separator + "part_image_row" + dataRowNum + "." + ext;
+
+					try (FileOutputStream fos = new FileOutputStream(imgPath)) {
+						fos.write(imgBytes);
+					}
+
+					imageMap.put(dataRowNum, imgPath);
+					System.out.println("  Extracted image: excelRow=" + anchorRow
+							+ " → dataRow=" + dataRowNum
+							+ " → " + imgPath
+							+ " (" + imgBytes.length + " bytes)");
+					dataRowNum++;
 				}
 			}
 		} catch (Exception e) {
@@ -1083,9 +1092,11 @@ public class RFQ_DetailsPage {
 
 	public boolean isEmailSentSuccessfully() {
 		try {
-			wait.until(ExpectedConditions.visibilityOfElementLocated(
-					By.xpath("//*[contains(text(),'Email sent') or " + "contains(text(),'Success') or "
-							+ "contains(text(),'sent successfully') or " + "contains(text(),'Mail sent')]")));
+			wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath(
+					"//*[contains(text(),'Email sent') or "
+					+ "contains(text(),'Success') or "
+					+ "contains(text(),'sent successfully') or "
+					+ "contains(text(),'Mail sent')]")));
 			return true;
 		} catch (Exception e) {
 			return driver.getPageSource().contains("sent") || driver.getPageSource().contains("Success");
