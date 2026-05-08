@@ -8,13 +8,19 @@ on:
         required: true
         default: 'testng.xml'
         type: choice
-        options: [testng.xml, testng-smoke.xml]
+        options:
+          - testng.xml
+          - testng-smoke.xml
+
       browser:
         description: 'Browser'
         required: true
         default: 'chrome'
         type: choice
-        options: [chrome, firefox]
+        options:
+          - chrome
+          - firefox
+
       tag:
         description: 'Cucumber tag'
         required: true
@@ -37,29 +43,38 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Verify Tools
+      - name: Verify Java & Maven
         run: |
           java -version
           mvn -version
 
-      - name: Compile
+      - name: Compile Project
         working-directory: cps-automation
         run: mvn clean compile -q
 
-      - name: Run Tests
+      - name: Execute Selenium Tests
         working-directory: cps-automation
-        run: mvn test "-DsuiteFile=${{ github.event.inputs.suite || 'testng.xml' }}" "-Dbrowser=${{ github.event.inputs.browser || 'chrome' }}" "-Dcucumber.filter.tags=${{ github.event.inputs.tag || '@RFQDetailsModule' }}" "-DbaseUrl=http://162.244.66.135:8989/rev-aux/buyerlogin" "-DtestFailureIgnore=true" "-DrfqId=NT79"
+        run: >
+          mvn test
+          "-DsuiteFile=${{ github.event.inputs.suite || 'testng.xml' }}"
+          "-Dbrowser=${{ github.event.inputs.browser || 'chrome' }}"
+          "-Dcucumber.filter.tags=${{ github.event.inputs.tag || '@RFQDetailsModule' }}"
+          "-DbaseUrl=http://162.244.66.135:8989/rev-aux/buyerlogin"
+          "-DtestFailureIgnore=true"
+          "-DrfqId=NT79"
 
-      - name: Show Report Files
+      - name: Show Generated Reports
         if: always()
         run: |
           echo === surefire-reports ===
           dir cps-automation\target\surefire-reports
+
           echo === cucumber-reports ===
           dir cps-automation\target\cucumber-reports
+
           echo === allure-results ===
           dir cps-automation\target\allure-results
 
@@ -79,7 +94,10 @@ jobs:
       - name: Generate Allure Report
         if: always()
         working-directory: cps-automation
-        run: mvn allure:report -q
+        run: >
+          mvn allure:report
+          "-Dallure.results.directory=target/allure-results"
+          "-Dallure.report.directory=target/site/allure-maven-plugin"
 
       - name: Prepare Reports for GitHub Pages
         if: always()
@@ -87,12 +105,15 @@ jobs:
           if not exist report-site mkdir report-site
           if not exist report-site\cucumber mkdir report-site\cucumber
           if not exist report-site\allure mkdir report-site\allure
+
           if exist cps-automation\target\cucumber-reports\cucumber.html (
             copy cps-automation\target\cucumber-reports\cucumber.html report-site\cucumber\index.html
           )
+
           if exist cps-automation\target\site\allure-maven-plugin (
             xcopy /E /I /Y cps-automation\target\site\allure-maven-plugin report-site\allure
           )
+
           echo ^<html^>^<head^>^<title^>CPS Automation Reports^</title^>^</head^>^<body^> > report-site\index.html
           echo ^<h1^>CPS Automation Test Reports^</h1^> >> report-site\index.html
           echo ^<ul^> >> report-site\index.html
