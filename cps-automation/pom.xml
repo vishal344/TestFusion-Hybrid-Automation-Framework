@@ -1,3 +1,4 @@
+
 <project xmlns="http://maven.apache.org/POM/4.0.0"
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -14,6 +15,9 @@
 		<suiteFile>testng.xml</suiteFile>
 		<browser>chrome</browser>
 		<baseUrl>http://162.244.66.135:8989/rev-aux/buyerlogin</baseUrl>
+		<!-- Single place to control allure version -->
+		<allure.version>2.25.0</allure.version>
+		<aspectj.version>1.9.21</aspectj.version>
 	</properties>
 
 	<dependencies>
@@ -61,17 +65,19 @@
 		<dependency>
 			<groupId>io.qameta.allure</groupId>
 			<artifactId>allure-testng</artifactId>
-			<version>2.25.0</version>
+			<version>${allure.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>io.qameta.allure</groupId>
 			<artifactId>allure-cucumber7-jvm</artifactId>
-			<version>2.25.0</version>
+			<version>${allure.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.aspectj</groupId>
 			<artifactId>aspectjweaver</artifactId>
-			<version>1.9.21</version>
+			<version>${aspectj.version}</version>
+			<!-- FIX: must NOT be test scope so maven-dependency-plugin can resolve it -->
+			<scope>runtime</scope>
 		</dependency>
 	</dependencies>
 
@@ -114,6 +120,34 @@
 		</pluginManagement>
 
 		<plugins>
+			<!-- FIX: Use maven-dependency-plugin to copy aspectjweaver jar
+			     so the argLine path is always correct on any machine / CI runner -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>3.6.1</version>
+				<executions>
+					<execution>
+						<id>copy-aspectjweaver</id>
+						<phase>process-test-resources</phase>
+						<goals>
+							<goal>copy</goal>
+						</goals>
+						<configuration>
+							<artifactItems>
+								<artifactItem>
+									<groupId>org.aspectj</groupId>
+									<artifactId>aspectjweaver</artifactId>
+									<version>${aspectj.version}</version>
+									<outputDirectory>${project.build.directory}/agents</outputDirectory>
+									<destFileName>aspectjweaver.jar</destFileName>
+								</artifactItem>
+							</artifactItems>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
@@ -129,19 +163,24 @@
 					<systemPropertyVariables>
 						<browser>${browser}</browser>
 						<baseUrl>${baseUrl}</baseUrl>
+						<!-- FIX: tell allure where to write results -->
+						<allure.results.directory>${project.build.directory}/allure-results</allure.results.directory>
 					</systemPropertyVariables>
+					<!-- FIX: use the copied jar so path is stable on all machines -->
 					<argLine>
-    -javaagent:"${user.home}/.m2/repository/org/aspectj/aspectjweaver/1.9.21/aspectjweaver-1.9.21.jar"
-                     </argLine>
+						-javaagent:"${project.build.directory}/agents/aspectjweaver.jar"
+					</argLine>
 				</configuration>
 			</plugin>
+
 			<plugin>
 				<groupId>io.qameta.allure</groupId>
 				<artifactId>allure-maven</artifactId>
 				<version>2.12.0</version>
 				<configuration>
-					<reportVersion>2.25.0</reportVersion>
+					<reportVersion>${allure.version}</reportVersion>
 					<resultsDirectory>${project.build.directory}/allure-results</resultsDirectory>
+					<reportDirectory>${project.build.directory}/site/allure-maven-plugin</reportDirectory>
 				</configuration>
 			</plugin>
 		</plugins>
