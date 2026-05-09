@@ -68,6 +68,7 @@ jobs:
 
       - name: Show Generated Reports
         if: always()
+        continue-on-error: true
         run: |
           echo === surefire-reports ===
           dir cps-automation\target\surefire-reports
@@ -93,6 +94,7 @@ jobs:
 
       - name: Generate Allure Report
         if: always()
+        continue-on-error: true
         working-directory: cps-automation
         run: >
           mvn allure:report
