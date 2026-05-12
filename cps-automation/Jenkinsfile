@@ -131,11 +131,14 @@ pipeline {
         /* ── Stage 6: Publish Reports in Jenkins UI ─────────── */
         stage('Publish Reports') {
             steps {
-                // Publish Allure Report
+                // ✅ FIX 1: Added commandline: 'allure' to match
+                //           the name configured in Jenkins Tools
                 allure([
                     includeProperties: false,
                     jdk: '',
-                    results: [[path: "cps-automation/${env.ALLURE_DIR}"]]
+                    results: [[path: "cps-automation/${env.ALLURE_DIR}"]],
+                    reportBuildPolicy: 'ALWAYS',
+                    commandline: 'allure'   // ← must match Jenkins Tools name
                 ])
 
                 // Publish Cucumber HTML Report
@@ -154,7 +157,6 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
-                    // Read TestNG results XML to check for failures
                     def testngFile = 'cps-automation/target/surefire-reports/testng-results.xml'
                     if (fileExists(testngFile)) {
                         def xml = readFile(testngFile)
@@ -178,7 +180,7 @@ pipeline {
         success {
             echo '✅ BUILD PASSED'
             emailext(
-                to: 'qa-team@yourcompany.com',
+                to: 'vishalwanode2021@gmail.com',
                 subject: "✅ PASSED: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
                 body: """
 Build Status : PASSED
@@ -197,8 +199,9 @@ Jenkins Build  : ${env.BUILD_URL}
 
         failure {
             echo '❌ BUILD FAILED'
+            // ✅ FIX 2: Changed email to your actual email
             emailext(
-                to: 'qa-team@yourcompany.com',
+                to: 'vishalwanode2021@gmail.com',
                 subject: "❌ FAILED: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
                 body: """
 Build Status : FAILED
@@ -217,8 +220,9 @@ Jenkins Build : ${env.BUILD_URL}
 
         unstable {
             echo '⚠️ BUILD UNSTABLE — Some tests failed'
+            // ✅ FIX 3: Changed email to your actual email
             emailext(
-                to: 'qa-team@yourcompany.com',
+                to: 'vishalwanode2021@gmail.com',
                 subject: "⚠️ UNSTABLE: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
                 body: """
 Build Status : UNSTABLE (some tests failed)
@@ -235,12 +239,10 @@ Console Log   : ${env.BUILD_URL}console
         }
 
         always {
-            // Archive screenshots, cucumber and surefire reports
             archiveArtifacts(
                 artifacts: 'cps-automation/target/screenshots/**,cps-automation/target/cucumber-reports/**,cps-automation/target/surefire-reports/**',
                 allowEmptyArchive: true
             )
-            // Publish TestNG XML results as Jenkins test trend graph
             junit(
                 testResults: 'cps-automation/target/surefire-reports/*.xml',
                 allowEmptyResults: true
