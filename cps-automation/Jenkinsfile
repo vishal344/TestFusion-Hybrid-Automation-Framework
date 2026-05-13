@@ -1,27 +1,18 @@
 pipeline {
     agent any
 
-    /*
-     * Triggers:
-     *   1. Every git push to the repo (via GitHub webhook)
-     *   2. Every night at 2 AM as a safety net
-     */
     triggers {
         githubPush()
         cron('H 2 * * *')
     }
 
     options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))  // keep last 10 builds
-        timeout(time: 60, unit: 'MINUTES')              // kill hung builds
-        disableConcurrentBuilds()                       // 1 build at a time
-        timestamps()                                    // timestamps in console
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        timestamps()
     }
 
-    /*
-     * Parameters let you choose suite/browser/tag from Jenkins UI
-     * without editing any code.
-     */
     parameters {
         choice(
             name: 'SUITE_FILE',
@@ -63,7 +54,6 @@ pipeline {
 
     stages {
 
-        /* ── Stage 1: Get the code ──────────────────────────── */
         stage('Checkout') {
             steps {
                 checkout scm
@@ -76,7 +66,6 @@ pipeline {
             }
         }
 
-        /* ── Stage 2: Verify Java and Maven ─────────────────── */
         stage('Verify Tools') {
             steps {
                 bat 'java -version'
@@ -84,7 +73,6 @@ pipeline {
             }
         }
 
-        /* ── Stage 3: Compile the project ───────────────────── */
         stage('Build') {
             steps {
                 dir('cps-automation') {
@@ -93,7 +81,6 @@ pipeline {
             }
         }
 
-        /* ── Stage 4: Run Selenium + Cucumber + TestNG tests ── */
         stage('Run Tests') {
             steps {
                 dir('cps-automation') {
@@ -115,7 +102,6 @@ pipeline {
             }
         }
 
-        /* ── Stage 5: Generate Allure Report ────────────────── */
         stage('Generate Allure Report') {
             steps {
                 dir('cps-automation') {
@@ -128,20 +114,17 @@ pipeline {
             }
         }
 
-        /* ── Stage 6: Publish Reports in Jenkins UI ─────────── */
         stage('Publish Reports') {
             steps {
-                // ✅ FIX 1: Added commandline: 'allure' to match
-                //           the name configured in Jenkins Tools
+                // ✅ commandline name must match Jenkins Tools → Allure Commandline → Name
                 allure([
                     includeProperties: false,
-                    jdk: '',
-                    results: [[path: "cps-automation/${env.ALLURE_DIR}"]],
+                    jdk              : '',
+                    results          : [[path: "cps-automation/${env.ALLURE_DIR}"]],
                     reportBuildPolicy: 'ALWAYS',
-                    commandline: 'allure'   // ← must match Jenkins Tools name
+                    commandline      : 'allure'
                 ])
 
-                // Publish Cucumber HTML Report
                 publishHTML([
                     allowMissing         : true,
                     alwaysLinkToLastBuild: true,
@@ -153,7 +136,6 @@ pipeline {
             }
         }
 
-        /* ── Stage 7: Quality Gate ───────────────────────────── */
         stage('Quality Gate') {
             steps {
                 script {
@@ -174,15 +156,15 @@ pipeline {
         }
     }
 
-    /* ── Post-build actions ──────────────────────────────────── */
     post {
 
         success {
             echo '✅ BUILD PASSED'
             emailext(
-                to: 'vishalwanode2021@gmail.com',
-                subject: "✅ PASSED: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
-                body: """
+                to      : 'vishalwanode2021@gmail.com',
+                subject : "✅ PASSED: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
+                mimeType: 'text/plain',
+                body    : """
 Build Status : PASSED
 Build Number : ${env.BUILD_NUMBER}
 Branch       : ${env.GIT_BRANCH}
@@ -199,11 +181,11 @@ Jenkins Build  : ${env.BUILD_URL}
 
         failure {
             echo '❌ BUILD FAILED'
-            // ✅ FIX 2: Changed email to your actual email
             emailext(
-                to: 'vishalwanode2021@gmail.com',
-                subject: "❌ FAILED: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
-                body: """
+                to      : 'vishalwanode2021@gmail.com',
+                subject : "❌ FAILED: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
+                mimeType: 'text/plain',
+                body    : """
 Build Status : FAILED
 Build Number : ${env.BUILD_NUMBER}
 Branch       : ${env.GIT_BRANCH}
@@ -220,11 +202,11 @@ Jenkins Build : ${env.BUILD_URL}
 
         unstable {
             echo '⚠️ BUILD UNSTABLE — Some tests failed'
-            // ✅ FIX 3: Changed email to your actual email
             emailext(
-                to: 'vishalwanode2021@gmail.com',
-                subject: "⚠️ UNSTABLE: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
-                body: """
+                to      : 'vishalwanode2021@gmail.com',
+                subject : "⚠️ UNSTABLE: CPS-Automation #${env.BUILD_NUMBER} [${params.TAG}]",
+                mimeType: 'text/plain',
+                body    : """
 Build Status : UNSTABLE (some tests failed)
 Build Number : ${env.BUILD_NUMBER}
 Branch       : ${env.GIT_BRANCH}
@@ -240,11 +222,11 @@ Console Log   : ${env.BUILD_URL}console
 
         always {
             archiveArtifacts(
-                artifacts: 'cps-automation/target/screenshots/**,cps-automation/target/cucumber-reports/**,cps-automation/target/surefire-reports/**',
+                artifacts        : 'cps-automation/target/screenshots/**,cps-automation/target/cucumber-reports/**,cps-automation/target/surefire-reports/**',
                 allowEmptyArchive: true
             )
             junit(
-                testResults: 'cps-automation/target/surefire-reports/*.xml',
+                testResults      : 'cps-automation/target/surefire-reports/*.xml',
                 allowEmptyResults: true
             )
         }
