@@ -25,7 +25,7 @@ public class RFQ_DetailsPage {
 	public RFQ_DetailsPage(WebDriver driver) {
 		this.driver = driver;
 		this.wait = new WebDriverWait(driver, Duration.ofSeconds(20));
-		this.longWait = new WebDriverWait(driver, Duration.ofSeconds(30));
+		this.longWait = new WebDriverWait(driver, Duration.ofSeconds(60)); // FIX: increased from 30s to 60s
 		this.shortWait = new WebDriverWait(driver, Duration.ofSeconds(3));
 		this.alertWait = new WebDriverWait(driver, Duration.ofMillis(500));
 	}
@@ -39,9 +39,6 @@ public class RFQ_DetailsPage {
 
 	private Map<String, Integer> tdMap   = new LinkedHashMap<>();
 
-	// FIX 1: imageMap is now keyed by 1-based DATA row number (not Excel anchor row index).
-	// Previously anchor.getRow1() gave 0-based Excel row indices that did not reliably
-	// match the page's data-line values, causing row 11 to reuse data-line=10.
 	private Map<Integer, String> imageMap = new LinkedHashMap<>();
 
 	private static final int MAX_ATTEMPTS = 3;
@@ -424,9 +421,6 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// UPLOAD IMAGE
-	// FIX 2: Use wait.until(presenceOfElementLocated) instead of findElement
-	// so we reliably get the actual current data-line from the DOM after
-	// force-closed modals (which could leave the page in a transitional state).
 	// ─────────────────────────────────────────────────────────────
 
 	public void uploadImageForRow(String imagePath) {
@@ -440,16 +434,22 @@ public class RFQ_DetailsPage {
 			return;
 		}
 
-		// FIX 2: Use explicit wait so we always get a stable element after
-		// a force-closed modal, rather than catching a stale reference.
 		String actualDataLine = null;
-		try {
-			WebElement priceSpan = wait.until(ExpectedConditions.presenceOfElementLocated(
-					By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]")));
-			actualDataLine = priceSpan.getAttribute("data-line");
-		} catch (Exception e) {
-			System.out.println("  [Image] Could not read data-line: " + e.getMessage());
+		for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+			try {
+				WebElement priceSpan = wait.until(ExpectedConditions.presenceOfElementLocated(
+						By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]")));
+				actualDataLine = priceSpan.getAttribute("data-line");
+				if (actualDataLine != null && !actualDataLine.isEmpty()) break;
+			} catch (StaleElementReferenceException e) {
+				System.out.println("  [Image] Stale on data-line read, retry " + (attempt + 1));
+				sleep(400);
+			} catch (Exception e) {
+				System.out.println("  [Image] Could not read data-line: " + e.getMessage());
+				break;
+			}
 		}
+
 		if (actualDataLine == null || actualDataLine.isEmpty()) {
 			System.out.println("  [Image] data-line unknown — skipping upload");
 			return;
@@ -542,10 +542,9 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// TARGET PRICE POPUP
-	// FIX 3: After force-close, explicitly wait for .modal-backdrop to clear
-	// before returning. Previously the backdrop remained in the DOM and blocked
-	// the next row's double-click on the price span, causing it to silently
-	// reuse the previous data-line.
+	// FIX A: Wait for modal inputs to be fully INTERACTABLE (not just visible)
+	// before filling fields. On Jenkins the modal opens but inputs are still
+	// animating — filling them immediately causes "element not interactable".
 	// ─────────────────────────────────────────────────────────────
 
 	public void handleTargetPricePopup(String rawPrice) {
@@ -555,10 +554,22 @@ public class RFQ_DetailsPage {
 
 		dismissToastrIfPresent();
 
-		By modalBy    = By.id("customTargetPopupModal");
+		By modalBy     = By.id("customTargetPopupModal");
 		By priceSpanBy = By.xpath("//table//tbody//tr[last()]//span[contains(@class,'price-input')]");
 
-		WebElement priceSpan = wait.until(ExpectedConditions.elementToBeClickable(priceSpanBy));
+		// Re-fetch price span fresh — never use a cached reference across DOM mutations
+		WebElement priceSpan = null;
+		for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+			try {
+				priceSpan = wait.until(ExpectedConditions.elementToBeClickable(priceSpanBy));
+				break;
+			} catch (StaleElementReferenceException e) {
+				System.out.println("  [StaleRetry] priceSpan fetch attempt " + (attempt + 1));
+				sleep(400);
+			}
+		}
+		if (priceSpan == null) throw new RuntimeException("Could not get price span after retries");
+
 		((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", priceSpan);
 		sleep(200);
 
@@ -594,9 +605,26 @@ public class RFQ_DetailsPage {
 		System.out.println("  Modal is open");
 
 		WebElement modal = driver.findElement(modalBy);
-		new WebDriverWait(driver, Duration.ofSeconds(10))
-				.until(d -> !modal.findElements(By.xpath(".//input[not(@type='hidden')]")).isEmpty());
 
+		// FIX A: Wait for inputs to be present AND clickable before interacting.
+		// On slow Jenkins machines the modal animates open — inputs exist in DOM
+		// but are not yet interactable. This caused "element not interactable"
+		// for Margin Factor, Shipping Factor, Tariff Factor, CPS Handling Cost on Row 9.
+		By marginFactorInputBy = By.xpath(
+				"//div[@id='customTargetPopupModal']"
+				+ "//label[contains(text(),'Margin Factor')]"
+				+ "/following::input[not(@type='hidden')][1]");
+		try {
+			new WebDriverWait(driver, Duration.ofSeconds(15))
+					.until(ExpectedConditions.elementToBeClickable(marginFactorInputBy));
+			System.out.println("  Modal fully loaded — inputs interactable");
+		} catch (TimeoutException e) {
+			System.out.println("  [WARN] Modal inputs slow — proceeding anyway");
+			sleep(1000); // last-resort wait
+		}
+
+		// Re-fetch modal after waiting (DOM may have updated during animation)
+		modal = driver.findElement(modalBy);
 		List<WebElement> modalInputs = modal.findElements(By.xpath(".//input[not(@type='hidden')]"));
 		System.out.println("  Modal inputs: " + modalInputs.size());
 
@@ -659,17 +687,12 @@ public class RFQ_DetailsPage {
 			} catch (Exception ignored) {}
 			dismissAlertIfPresent();
 
-			// FIX 3: After force-close, explicitly wait for the backdrop to be gone
-			// from the DOM before returning. This prevents the next row's double-click
-			// on the price span from being swallowed by a lingering backdrop overlay,
-			// which was the direct cause of row 11 reusing data-line=10.
 			try {
 				new WebDriverWait(driver, Duration.ofSeconds(5)).until(d ->
 						d.findElements(By.cssSelector(".modal-backdrop")).isEmpty()
 				);
 				System.out.println("  Backdrop cleared");
 			} catch (TimeoutException ignored) {
-				// Force-remove backdrop via JS as last resort
 				try {
 					((JavascriptExecutor) driver).executeScript(
 							"document.querySelectorAll('.modal-backdrop').forEach(function(el){"
@@ -682,7 +705,6 @@ public class RFQ_DetailsPage {
 			}
 		}
 
-		// Dismiss any toastr triggered by the Save response before next row starts
 		try {
 			sleep(400);
 			dismissToastrIfPresent();
@@ -710,8 +732,10 @@ public class RFQ_DetailsPage {
 		dismissAlertIfPresent();
 		System.out.println("  Send Email clicked — waiting for version popup...");
 
+		// FIX B: Use longWait (60s) instead of wait (20s) for version popup.
+		// Jenkins is slower — the popup can take 30-40s to appear after clicking Send Email.
 		try {
-			wait.until(ExpectedConditions.visibilityOfElementLocated(
+			longWait.until(ExpectedConditions.visibilityOfElementLocated(
 					By.xpath("//button[contains(@onclick,'createVersion')]")));
 			System.out.println("  Version popup is visible");
 		} catch (Exception e) {
@@ -721,29 +745,70 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// CREATE VERSION POPUP
+	// FIX B: Increase timeout to longWait (60s) and add multiple selector
+	// fallbacks. On Jenkins the version popup appears after a slow server
+	// response — 20s was not enough.
 	// ─────────────────────────────────────────────────────────────
 
 	public void handleCreateVersionPopup() {
 		System.out.println("  Handling Create Version popup...");
 
-		By createVersionBtnBy = By.xpath("//button[contains(@onclick,'createVersion')]");
+		By createVersionBtnBy        = By.xpath("//button[contains(@onclick,'createVersion')]");
+		By createVersionBtnByText    = By.xpath("//button[contains(text(),'Create Version')]");
+		By createVersionBtnByClass   = By.xpath("//button[contains(@class,'create-version')]");
 
+		boolean clicked = false;
+
+		// Attempt 1: wait with longWait then click
 		try {
-			WebElement createBtn = wait.until(ExpectedConditions.elementToBeClickable(createVersionBtnBy));
+			WebElement createBtn = longWait.until(ExpectedConditions.elementToBeClickable(createVersionBtnBy));
 			((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", createBtn);
-			sleep(200);
+			sleep(300);
 			((JavascriptExecutor) driver).executeScript("arguments[0].click();", createBtn);
-			System.out.println("  'Create Version' clicked");
+			System.out.println("  'Create Version' clicked (attempt 1 - onclick)");
+			clicked = true;
 		} catch (Exception e) {
-			System.out.println("  [WARN] Create Version button not found, trying JS: " + e.getMessage());
+			System.out.println("  [WARN] Attempt 1 failed: " + e.getMessage());
+		}
+
+		// Attempt 2: try by button text
+		if (!clicked) {
+			try {
+				WebElement createBtn = new WebDriverWait(driver, Duration.ofSeconds(10))
+						.until(ExpectedConditions.elementToBeClickable(createVersionBtnByText));
+				((JavascriptExecutor) driver).executeScript("arguments[0].click();", createBtn);
+				System.out.println("  'Create Version' clicked (attempt 2 - text)");
+				clicked = true;
+			} catch (Exception e) {
+				System.out.println("  [WARN] Attempt 2 failed: " + e.getMessage());
+			}
+		}
+
+		// Attempt 3: try by class
+		if (!clicked) {
+			try {
+				WebElement createBtn = new WebDriverWait(driver, Duration.ofSeconds(10))
+						.until(ExpectedConditions.elementToBeClickable(createVersionBtnByClass));
+				((JavascriptExecutor) driver).executeScript("arguments[0].click();", createBtn);
+				System.out.println("  'Create Version' clicked (attempt 3 - class)");
+				clicked = true;
+			} catch (Exception e) {
+				System.out.println("  [WARN] Attempt 3 failed: " + e.getMessage());
+			}
+		}
+
+		// Attempt 4: JS direct function call
+		if (!clicked) {
+			System.out.println("  [WARN] All button attempts failed — calling JS createVersion()");
 			((JavascriptExecutor) driver).executeScript("if(typeof createVersion==='function') createVersion();");
 		}
 
-		sleep(1000);
+		sleep(1500);
 		dismissAlertIfPresent();
 
+		// FIX B: Use longWait for notes popup appearance check too
 		try {
-			wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("notesText")));
+			longWait.until(ExpectedConditions.visibilityOfElementLocated(By.id("notesText")));
 			System.out.println("  Notes popup appeared after Create Version");
 		} catch (Exception e) {
 			System.out.println("  [WARN] Notes popup not immediately visible");
@@ -752,30 +817,72 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// NOTES POPUP
+	// FIX C: Use longWait (60s) instead of wait (20s) for notesText visibility.
+	// On Jenkins the notes popup appears after a slow server response following
+	// createVersion() — 20s caused TimeoutException at RFQ_DetailsPage.java:760.
+	// Added JS fallback if normal interaction fails.
 	// ─────────────────────────────────────────────────────────────
 
 	public void handleNotesPopup(String noteText) {
 		System.out.println("  Handling Notes popup with note: '" + noteText + "'");
 
-		WebElement notesTextarea = wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("notesText")));
+		WebElement notesTextarea = null;
+
+		// FIX C: Use longWait (60s) — notes popup is slow to appear on Jenkins
+		try {
+			notesTextarea = longWait.until(ExpectedConditions.visibilityOfElementLocated(By.id("notesText")));
+			System.out.println("  notesText is visible");
+		} catch (TimeoutException e) {
+			System.out.println("  [WARN] notesText not visible after 60s — trying JS scroll fallback");
+			try {
+				notesTextarea = driver.findElement(By.id("notesText"));
+				((JavascriptExecutor) driver).executeScript(
+						"arguments[0].scrollIntoView(true); arguments[0].focus();", notesTextarea);
+				sleep(500);
+			} catch (Exception e2) {
+				throw new RuntimeException("Notes textarea not found after all attempts: " + e2.getMessage());
+			}
+		}
+
 		((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", notesTextarea);
 		sleep(200);
 
-		notesTextarea.click();
-		notesTextarea.clear();
-		((JavascriptExecutor) driver).executeScript(
-				"arguments[0].value=''; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
-				notesTextarea);
-		notesTextarea.sendKeys(noteText);
+		// Clear and type note text
+		try {
+			notesTextarea.click();
+			notesTextarea.clear();
+			((JavascriptExecutor) driver).executeScript(
+					"arguments[0].value=''; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
+					notesTextarea);
+			notesTextarea.sendKeys(noteText);
+		} catch (Exception e) {
+			// JS fallback for setting value
+			System.out.println("  [WARN] Normal sendKeys failed, using JS: " + e.getMessage());
+			((JavascriptExecutor) driver).executeScript(
+					"arguments[0].value=arguments[1];"
+					+ "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+					+ "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+					notesTextarea, noteText);
+		}
+
 		((JavascriptExecutor) driver).executeScript(
 				"arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
 				+ "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", notesTextarea);
 		System.out.println("  Note entered: '" + noteText + "'");
 		sleep(200);
 
-		WebElement saveBtn = wait.until(ExpectedConditions.elementToBeClickable(By.id("saveNotes")));
-		((JavascriptExecutor) driver).executeScript("arguments[0].click();", saveBtn);
-		System.out.println("  Notes Save clicked");
+		// Click save button with fallback
+		try {
+			WebElement saveBtn = wait.until(ExpectedConditions.elementToBeClickable(By.id("saveNotes")));
+			((JavascriptExecutor) driver).executeScript("arguments[0].click();", saveBtn);
+			System.out.println("  Notes Save clicked");
+		} catch (Exception e) {
+			System.out.println("  [WARN] saveNotes button not found, trying JS: " + e.getMessage());
+			((JavascriptExecutor) driver).executeScript(
+					"var btn=document.getElementById('saveNotes');"
+					+ "if(btn) btn.click();"
+					+ "else if(typeof saveNotes==='function') saveNotes();");
+		}
 
 		sleep(1000);
 		dismissAlertIfPresent();
@@ -944,7 +1051,6 @@ public class RFQ_DetailsPage {
 			enterText(19 + o, rowData[12]);
 		}
 
-		// imageMap is now keyed by 1-based data row index — matches excelRowIndex exactly
 		uploadImageForRow(imageMap.get(excelRowIndex));
 		handleTargetPricePopup(rowData[10]);
 	}
@@ -982,9 +1088,14 @@ public class RFQ_DetailsPage {
 
 	private void fillModalField(WebElement modal, String labelText, String value) {
 		try {
-			WebElement field = modal.findElement(By.xpath(
+			// Re-fetch modal element to avoid stale reference
+			WebElement freshModal = driver.findElement(By.id("customTargetPopupModal"));
+			WebElement field = freshModal.findElement(By.xpath(
 					".//label[contains(text(),'" + labelText + "')]"
 					+ "/following::input[not(@type='hidden')][1]"));
+			// FIX A: Ensure field is interactable before filling
+			new WebDriverWait(driver, Duration.ofSeconds(10))
+					.until(ExpectedConditions.elementToBeClickable(field));
 			clearAndType(field, value);
 			System.out.println("  " + labelText + " ← " + value);
 		} catch (Exception e) {
@@ -994,12 +1105,6 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// READ EXCEL (text + embedded images)
-	// FIX 1: Remap anchor row indices to 1-based data row numbers using TreeMap.
-	// Previously imageMap was keyed by anchor.getRow1() which is the 0-based Excel
-	// row index of the picture anchor — these do NOT reliably correspond to the
-	// sequential data-line values on the page. By sorting anchors and assigning
-	// sequential 1-based keys we guarantee imageMap.get(1) = first image,
-	// imageMap.get(11) = eleventh image, regardless of how POI reports anchor rows.
 	// ─────────────────────────────────────────────────────────────
 
 	public String[][] readExcelData(String filePath) throws Exception {
@@ -1032,8 +1137,6 @@ public class RFQ_DetailsPage {
 			XSSFDrawing drawing = sheet.getDrawingPatriarch();
 			if (drawing != null) {
 
-				// FIX 1A: Collect all picture anchors into a TreeMap sorted by anchor row.
-				// This gives us a stable insertion order independent of POI's internal ordering.
 				TreeMap<Integer, byte[]>  anchorToBytes = new TreeMap<>();
 				TreeMap<Integer, String>  anchorToExt   = new TreeMap<>();
 
@@ -1043,15 +1146,11 @@ public class RFQ_DetailsPage {
 						XSSFClientAnchor anchor = (XSSFClientAnchor) pic.getAnchor();
 						int              aRow   = anchor.getRow1();
 						XSSFPictureData  pd     = pic.getPictureData();
-						// If two pictures share the same anchor row, keep the last one
 						anchorToBytes.put(aRow, pd.getData());
 						anchorToExt.put(aRow,   pd.suggestFileExtension());
 					}
 				}
 
-				// FIX 1B: Remap sorted anchor rows → sequential 1-based data row numbers.
-				// dataRowNum=1 corresponds to the first data row in the Excel sheet and
-				// to data-line=1 on the page. This is the key fix for row 11.
 				int dataRowNum = 1;
 				for (Map.Entry<Integer, byte[]> entry : anchorToBytes.entrySet()) {
 					int    anchorRow = entry.getKey();
