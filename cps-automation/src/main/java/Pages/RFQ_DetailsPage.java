@@ -349,14 +349,14 @@ public class RFQ_DetailsPage {
 			return;
 		}
 
-		String base              = "//table//tbody//tr[last()]//td[" + tdIndex + "]";
-		By specificTextareaBy    = By.xpath(base + "//textarea[contains(@class,'rfq-textarea-display')]");
-		By anyTextareaBy         = By.xpath(base + "//textarea[not(contains(@style,'display:none')) and not(contains(@style,'display: none'))]");
-		By specificInputBy       = By.xpath(base + "//input[contains(@class,'editable-field') and not(contains(@class,'rfq-hidden-input'))]");
-		By anyInputBy            = By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]");
-		By selectBy              = By.xpath(base + "//select");
-		By contentEditableBy     = By.xpath(base + "//*[@contenteditable='true']");
-		By hiddenInputBy         = By.xpath(base + "//input[contains(@class,'rfq-hidden-input')]");
+		String base           = "//table//tbody//tr[last()]//td[" + tdIndex + "]";
+		By specificTextareaBy = By.xpath(base + "//textarea[contains(@class,'rfq-textarea-display')]");
+		By anyTextareaBy      = By.xpath(base + "//textarea[not(contains(@style,'display:none')) and not(contains(@style,'display: none'))]");
+		By specificInputBy    = By.xpath(base + "//input[contains(@class,'editable-field') and not(contains(@class,'rfq-hidden-input'))]");
+		By anyInputBy         = By.xpath(base + "//input[not(@type='hidden') and not(@type='file')]");
+		By selectBy           = By.xpath(base + "//select");
+		By contentEditableBy  = By.xpath(base + "//*[@contenteditable='true']");
+		By hiddenInputBy      = By.xpath(base + "//input[contains(@class,'rfq-hidden-input')]");
 
 		boolean hasSpecificTextarea = !driver.findElements(specificTextareaBy).isEmpty();
 		boolean hasAnyTextarea      = !driver.findElements(anyTextareaBy).isEmpty();
@@ -419,10 +419,7 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// UPLOAD IMAGE
-	// FIX 1: Accept explicit dataLine — never read data-line from DOM.
-	// tr[last()] drifts after force-closed modals. Passing the 1-based loop
-	// index guarantees the correct upload-link is targeted every time.
-	// Safe for GitHub Actions: fast machine → upload link found instantly.
+	// Uses explicit dataLine — never reads from DOM (tr[last()] drifts).
 	// ─────────────────────────────────────────────────────────────
 
 	public void uploadImageForRow(String imagePath, int dataLine) {
@@ -439,7 +436,6 @@ public class RFQ_DetailsPage {
 		System.out.println("  [Image] Uploading for data-line=" + dataLine
 				+ " | file=" + imgFile.getName());
 
-		// FIX 1: Use explicit dataLine — guaranteed correct
 		By uploadLinkBy = By.xpath(
 				"//a[contains(@class,'upload-link') and @data-line='" + dataLine + "']");
 		List<WebElement> uploadLinks = driver.findElements(uploadLinkBy);
@@ -521,11 +517,15 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// TARGET PRICE POPUP
-	// FIX 2: Locate price span by explicit data-line attribute — not tr[last()].
-	//        tr[last()] drifts after force-close; explicit data-line is stable.
-	// FIX 3: fillModalField uses absolute XPath from document root so the modal
-	//        WebElement is never cached across DOM re-renders.
-	// Safe for GitHub Actions: fast machine → no drift, waits exit immediately.
+	//
+	// KEY FIX — Chrome 148 re-renders the DOM faster after image upload,
+	// invalidating the priceSpan reference before doubleClick runs.
+	// Solution: re-fetch priceSpan fresh inside a retry loop immediately
+	// before EVERY doubleClick attempt. Never hold a reference across
+	// uploadImageForRow() — treat it as always stale after upload.
+	//
+	// Also uses explicit dataLine XPath (not tr[last()]) so the correct
+	// price span is targeted even after force-closed modals shift row order.
 	// ─────────────────────────────────────────────────────────────
 
 	public void handleTargetPricePopup(String rawPrice, int dataLine) {
@@ -535,63 +535,77 @@ public class RFQ_DetailsPage {
 
 		dismissToastrIfPresent();
 
-		By modalBy = By.id("customTargetPopupModal");
+		By modalBy     = By.id("customTargetPopupModal");
 
-		// FIX 2: Use explicit dataLine — never tr[last()]
+		// Use explicit dataLine — never tr[last()] which drifts after force-close
 		By priceSpanBy = By.xpath(
 				"//span[contains(@class,'price-input') and @data-line='" + dataLine + "']");
 
-		WebElement priceSpan = null;
-		for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+		// KEY FIX: Re-fetch priceSpan fresh and doubleClick inside retry loop.
+		// Chrome 148 re-renders DOM after upload faster than Chrome 147,
+		// making any pre-fetched reference stale by the time doubleClick runs.
+		boolean modalOpened = false;
+		for (int attempt = 1; attempt <= 3; attempt++) {
 			try {
-				priceSpan = wait.until(ExpectedConditions.elementToBeClickable(priceSpanBy));
-				break;
-			} catch (StaleElementReferenceException e) {
-				System.out.println("  [StaleRetry] priceSpan fetch attempt " + (attempt + 1));
-				sleep(400);
-			}
-		}
-		if (priceSpan == null)
-			throw new RuntimeException("Could not get price span after retries");
+				dismissToastrIfPresent();
 
-		((JavascriptExecutor) driver).executeScript(
-				"arguments[0].scrollIntoView({block:'center'});", priceSpan);
-		sleep(200);
-		System.out.println("  Price span: class='" + priceSpan.getAttribute("class")
-				+ "' data-line='" + priceSpan.getAttribute("data-line") + "'");
+				// Always re-fetch immediately before doubleClick — never use cached ref
+				WebElement freshSpan = wait.until(
+						ExpectedConditions.elementToBeClickable(priceSpanBy));
+				((JavascriptExecutor) driver).executeScript(
+						"arguments[0].scrollIntoView({block:'center'});", freshSpan);
+				sleep(200);
 
-		new Actions(driver).doubleClick(priceSpan).perform();
-		System.out.println("  Double-clicked price span");
-		sleep(600);
+				if (attempt == 1) {
+					System.out.println("  Price span: class='" + freshSpan.getAttribute("class")
+							+ "' data-line='" + freshSpan.getAttribute("data-line") + "'");
+				}
 
-		for (int attempt = 2; attempt <= 3; attempt++) {
-			boolean open = false;
-			try {
+				// Try Actions doubleClick first
+				new Actions(driver).doubleClick(freshSpan).perform();
+				System.out.println("  Double-clicked price span (attempt " + attempt + ")");
+				sleep(700);
+
+				// Check if modal opened
 				List<WebElement> m = driver.findElements(modalBy);
-				open = !m.isEmpty() && m.get(0).isDisplayed();
-			} catch (Exception ignored) {}
-			if (open) break;
-			System.out.println("  Modal not open, JS dblclick attempt " + attempt);
-			dismissToastrIfPresent();
-			try {
-				WebElement freshSpan = driver.findElement(priceSpanBy);
+				if (!m.isEmpty() && m.get(0).isDisplayed()) {
+					modalOpened = true;
+					break;
+				}
+
+				// Modal not open — try JS dblclick on a fresh reference
+				System.out.println("  Modal not open after Actions, trying JS dblclick");
+				WebElement spanForJs = driver.findElement(priceSpanBy);
 				((JavascriptExecutor) driver).executeScript(
 						"arguments[0].dispatchEvent(new MouseEvent('dblclick',"
-						+ "{bubbles:true,cancelable:true,view:window}));", freshSpan);
-			} catch (Exception ignored) {}
-			sleep(600);
+						+ "{bubbles:true,cancelable:true,view:window}));", spanForJs);
+				sleep(700);
+
+				m = driver.findElements(modalBy);
+				if (!m.isEmpty() && m.get(0).isDisplayed()) {
+					modalOpened = true;
+					break;
+				}
+
+			} catch (StaleElementReferenceException e) {
+				System.out.println("  [StaleRetry] doubleClick attempt " + attempt
+						+ " — re-fetching span after Chrome re-render");
+				sleep(500);
+			} catch (Exception e) {
+				System.out.println("  [WARN] doubleClick attempt " + attempt
+						+ " failed: " + e.getMessage());
+				sleep(500);
+			}
 		}
 
-		boolean modalOpen = false;
-		try {
-			List<WebElement> m = driver.findElements(modalBy);
-			modalOpen = !m.isEmpty() && m.get(0).isDisplayed();
-		} catch (Exception ignored) {}
-		if (!modalOpen) throw new RuntimeException("Target price modal did not open.");
+		if (!modalOpened) {
+			throw new RuntimeException(
+					"Target price modal did not open after 3 attempts for data-line=" + dataLine);
+		}
 		System.out.println("  Modal is open");
 
-		// Wait for modal inputs to be fully interactable (handles slow animation on Jenkins)
-		// GitHub Actions: modal ready in ~1s → wait exits in ~1s — no impact
+		// Wait for modal inputs to be fully interactable before filling.
+		// Handles slow modal animation on Jenkins — fast on GitHub Actions.
 		By marginInputBy = By.xpath(
 				"//div[@id='customTargetPopupModal']"
 				+ "//label[contains(text(),'Margin Factor')]"
@@ -614,12 +628,13 @@ public class RFQ_DetailsPage {
 		System.out.println("  Target Price Set <- " + price);
 		sleep(150);
 
-		// FIX 3: fillModalField re-fetches via absolute XPath every call — never stale
+		// fillModalField uses absolute XPath — never a cached modal reference
 		fillModalField("Margin Factor",     "10");  sleep(100);
 		fillModalField("Shipping Factor",   "5");   sleep(100);
 		fillModalField("Tariff Factor",     "12");  sleep(100);
 		fillModalField("CPS Handling Cost", "720"); sleep(150);
 
+		// Find and click Save button
 		List<WebElement> allBtns = driver.findElements(By.xpath(
 				"//div[@id='customTargetPopupModal']//button"));
 		System.out.println("  Buttons in modal: " + allBtns.size());
@@ -642,6 +657,7 @@ public class RFQ_DetailsPage {
 		((JavascriptExecutor) driver).executeScript("arguments[0].click();", saveBtn);
 		System.out.println("  Save clicked: '" + saveBtn.getText() + "'");
 
+		// Poll for modal close — 30s max
 		boolean closed  = false;
 		long    deadline = System.currentTimeMillis() + 30_000;
 		while (System.currentTimeMillis() < deadline) {
@@ -976,8 +992,8 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// FILL ROW DATA
-	// FIX 1 applied: pass excelRowIndex to uploadImageForRow and
-	// handleTargetPricePopup so both always target the correct data-line.
+	// Pass excelRowIndex explicitly to uploadImageForRow and
+	// handleTargetPricePopup — both use it as the data-line value.
 	// ─────────────────────────────────────────────────────────────
 
 	public void fillRowData(String[] rowData, int excelRowIndex) {
@@ -1012,7 +1028,6 @@ public class RFQ_DetailsPage {
 			enterText(19 + o, rowData[12]);
 		}
 
-		// FIX 1: Pass excelRowIndex as dataLine to both methods
 		uploadImageForRow(imageMap.get(excelRowIndex), excelRowIndex);
 		handleTargetPricePopup(rowData[10], excelRowIndex);
 	}
@@ -1052,11 +1067,10 @@ public class RFQ_DetailsPage {
 
 	// ─────────────────────────────────────────────────────────────
 	// FILL MODAL FIELD
-	// FIX 3: Absolute XPath from document root — never a cached modal reference.
-	// After Target Price is entered the modal DOM re-renders; any WebElement
-	// captured before is stale. Absolute XPath re-queries fresh on every call.
-	// JS fallback ensures field is always filled even if clickable-wait times out.
-	// Safe for GitHub Actions: fast machine → clickable immediately, no fallback.
+	// Uses absolute XPath from document root — never a cached modal WebElement.
+	// After Target Price entry the modal DOM re-renders; any pre-captured ref
+	// becomes stale. Absolute XPath re-queries fresh on every call.
+	// JS fallback ensures field is always filled even on slow Jenkins machines.
 	// ─────────────────────────────────────────────────────────────
 
 	private void fillModalField(String labelText, String value) {
